@@ -38,7 +38,17 @@ export default function NoteDetailPage() {
     return `${m}:${sec.toString().padStart(2, "0")}`;
   };
 
+  const parseDuration = (dur: string) => {
+    const parts = dur.split(":").map(Number);
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    return 0;
+  };
+
   const handleResume = () => {
+    if (elapsed === 0 && note) {
+      setElapsed(parseDuration(note.duration));
+    }
     setRecordingState("recording");
     setTranscriptVisible(true);
     if (id) startSession(id);
