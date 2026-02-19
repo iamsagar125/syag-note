@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FileText, Search, Settings, Sparkles, FolderOpen, Users, Briefcase, Star, Archive, Plus, X, Check, Home, Trash2 } from "lucide-react";
+import { SyagLogo } from "@/components/SyagLogo";
 import { cn } from "@/lib/utils";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useFolders, type Folder } from "@/contexts/FolderContext";
@@ -34,8 +35,7 @@ export function Sidebar() {
     <aside className="flex h-screen w-56 flex-shrink-0 flex-col bg-sidebar">
       {/* Logo */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-        <img src="/favicon.png?v=2" alt="Syag" className="h-6 w-6 rounded-md" />
-        <span className="font-display text-lg text-foreground">syag</span>
+        <SyagLogo size={24} showText />
       </div>
 
       {/* Search */}
