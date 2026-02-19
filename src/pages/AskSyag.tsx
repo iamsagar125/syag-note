@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Sparkles, ArrowUp, ChevronRight, FileText, Square } from "lucide-react";
+import { Sparkles, ArrowUp, ChevronDown, ChevronRight, FileText, Square } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { useNotes } from "@/contexts/NotesContext";
@@ -25,6 +25,7 @@ export default function AskSyag() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [useTranscripts, setUseTranscripts] = useState(true);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -82,32 +83,39 @@ export default function AskSyag() {
 
               {/* Input card */}
               <div className="w-full max-w-xl rounded-2xl border border-border bg-card shadow-sm p-4 mb-5">
-                {/* Context row */}
-                <div className="flex items-center gap-3 mb-3">
-                  {/* My notes label */}
-                  <div className="inline-flex items-center gap-1.5 text-sm text-foreground">
-                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="font-medium">My notes</span>
-                  </div>
-
-                  <span className="text-muted-foreground text-xs">·</span>
-
-                  {/* Transcripts toggle */}
+                {/* Context row with dropdown */}
+                <div className="relative mb-3">
                   <button
-                    onClick={() => setUseTranscripts(!useTranscripts)}
-                    className={cn(
-                      "relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors",
-                      useTranscripts ? "bg-accent" : "bg-muted-foreground/30"
-                    )}
+                    onClick={() => setDropdownOpen(!dropdownOpen)}
+                    className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1.5 text-sm transition-colors hover:bg-secondary"
                   >
-                    <span
-                      className="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform"
-                      style={{ transform: useTranscripts ? "translateX(18px)" : "translateX(3px)" }}
-                    />
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="font-medium text-foreground">My notes</span>
+                    <span className="text-muted-foreground">All meetings</span>
+                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
                   </button>
-                  <span className={cn("text-sm", useTranscripts ? "text-foreground" : "text-muted-foreground")}>
-                    Transcripts · Last {noteCount || 25}
-                  </span>
+                  {dropdownOpen && (
+                    <div className="absolute top-full left-0 mt-1 rounded-lg border border-border bg-card shadow-lg py-1 z-50 min-w-[220px]">
+                      <div className="flex items-center justify-between px-4 py-2 hover:bg-secondary transition-colors">
+                        <span className="text-sm text-foreground">Use transcripts (max 25)</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUseTranscripts(!useTranscripts);
+                          }}
+                          className={cn(
+                            "relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors",
+                            useTranscripts ? "bg-accent" : "bg-muted-foreground/30"
+                          )}
+                        >
+                          <span
+                            className="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform"
+                            style={{ transform: useTranscripts ? "translateX(18px)" : "translateX(3px)" }}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Input row */}
