@@ -214,7 +214,7 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
                     </button>
                     {recordingState === "recording" ? (
                       <button
-                        onClick={onPauseRecording}
+                        onClick={onStopRecording}
                         className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                       >
                         <Pause className="h-3 w-3" />
@@ -229,13 +229,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
                         Resume
                       </button>
                     )}
-                    <button
-                      onClick={onStopRecording}
-                      className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
-                    >
-                      <Square className="h-3 w-3" />
-                      Stop
-                    </button>
                   </>
                 ) : (
                   <button

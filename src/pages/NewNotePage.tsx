@@ -4,10 +4,10 @@ import { Sidebar } from "@/components/Sidebar";
 import { AskBar } from "@/components/AskBar";
 import { NotesViewToggle } from "@/components/NotesViewToggle";
 import {
-  Mic, MicOff, Pause, Play, Eye, EyeOff, Square,
+  Mic, MicOff, Pause, Play, Eye, EyeOff, Square, Search,
   PanelLeftClose, PanelLeft, Share2, MoreHorizontal,
   Calendar, Clock, Users, Plus, FolderOpen, Check, X, Hash,
-  CheckCircle2, Circle
+  CheckCircle2, Circle, Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFolders } from "@/contexts/FolderContext";
@@ -67,6 +67,8 @@ export default function NewNotePage() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [viewMode, setViewMode] = useState<"my-notes" | "ai-notes">("ai-notes");
   const [summary, setSummary] = useState<ReturnType<typeof generateSummary> | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [transcriptSearch, setTranscriptSearch] = useState("");
   const titleRef = useRef<HTMLInputElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const { folders, createFolder } = useFolders();
@@ -104,14 +106,22 @@ export default function NewNotePage() {
     setRecordingState("stopped");
     setTranscriptVisible(true);
     if (!title) setTitle("Meeting notes");
-    // Generate initial summary from notes + transcript
-    setSummary(generateSummary(personalNotes, fakeTranscriptLines));
+    setIsSummarizing(true);
+    // Simulate AI processing delay
+    setTimeout(() => {
+      setSummary(generateSummary(personalNotes, fakeTranscriptLines));
+      setIsSummarizing(false);
+    }, 1500);
   }, [title, personalNotes]);
 
   const handleViewModeChange = useCallback((mode: "my-notes" | "ai-notes") => {
     if (mode === "ai-notes" && viewMode === "my-notes") {
       // Re-summarize when switching back to AI notes
-      setSummary(generateSummary(personalNotes, fakeTranscriptLines));
+      setIsSummarizing(true);
+      setTimeout(() => {
+        setSummary(generateSummary(personalNotes, fakeTranscriptLines));
+        setIsSummarizing(false);
+      }, 1200);
     }
     setViewMode(mode);
   }, [viewMode, personalNotes]);
@@ -307,9 +317,16 @@ export default function NewNotePage() {
                         className="min-h-[40vh] w-full resize-none bg-transparent text-[15px] text-foreground leading-relaxed placeholder:text-muted-foreground/50 focus:outline-none"
                         autoFocus
                       />
+                    ) : isSummarizing ? (
+                      <div className="flex flex-col items-center justify-center py-20 gap-4">
+                        <Loader2 className="h-6 w-6 animate-spin text-accent" />
+                        <div className="text-center">
+                          <p className="text-sm font-medium text-foreground/70">Generating summary...</p>
+                          <p className="text-xs text-muted-foreground mt-1">Analyzing your notes and transcript</p>
+                        </div>
+                      </div>
                     ) : (
                       <>
-                        {/* Show personal notes above AI notes if any exist */}
                         {personalNotes && (
                           <div className="mb-8 pb-6 border-b border-border/50">
                             <p className="text-[15px] leading-relaxed text-foreground whitespace-pre-wrap">{personalNotes}</p>
@@ -403,9 +420,27 @@ export default function NewNotePage() {
                     <EyeOff className="h-3 w-3" />
                   </button>
                 </div>
+                {/* Search bar */}
+                <div className="mt-2 flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5">
+                  <Search className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                  <input
+                    value={transcriptSearch}
+                    onChange={(e) => setTranscriptSearch(e.target.value)}
+                    placeholder="Search transcript..."
+                    className="flex-1 min-w-0 bg-transparent text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none"
+                  />
+                  {transcriptSearch && (
+                    <button onClick={() => setTranscriptSearch("")} className="text-muted-foreground hover:text-foreground">
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="p-4 space-y-3">
-                {fakeTranscriptLines.slice(0, isStopped ? fakeTranscriptLines.length : visibleLines).map((line, i) => (
+                {fakeTranscriptLines
+                  .slice(0, isStopped ? fakeTranscriptLines.length : visibleLines)
+                  .filter(line => !transcriptSearch || line.text.toLowerCase().includes(transcriptSearch.toLowerCase()))
+                  .map((line, i) => (
                   <div key={i} className="animate-fade-in">
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <div className="flex h-4 w-4 items-center justify-center rounded-full bg-secondary text-[8px] font-medium text-foreground">
@@ -415,21 +450,30 @@ export default function NewNotePage() {
                       <span className="text-[10px] text-muted-foreground">{line.time}</span>
                     </div>
                     <p className="text-[12px] text-muted-foreground leading-relaxed pl-6">
-                      {line.text}
+                      {transcriptSearch ? (
+                        line.text.split(new RegExp(`(${transcriptSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, j) =>
+                          part.toLowerCase() === transcriptSearch.toLowerCase() 
+                            ? <mark key={j} className="bg-accent/20 text-foreground rounded-sm px-0.5">{part}</mark>
+                            : part
+                        )
+                      ) : line.text}
                     </p>
                   </div>
                 ))}
-                {recordingState === "recording" && (
+                {!transcriptSearch && recordingState === "recording" && (
                   <div className="flex items-center gap-1.5 pt-1 animate-pulse">
                     <div className="h-1 w-1 rounded-full bg-destructive" />
                     <span className="text-[10px] text-muted-foreground">Listening...</span>
                   </div>
                 )}
-                {recordingState === "paused" && (
+                {!transcriptSearch && recordingState === "paused" && (
                   <div className="flex items-center gap-1.5 pt-1">
                     <Pause className="h-2.5 w-2.5 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground">Paused</span>
                   </div>
+                )}
+                {transcriptSearch && fakeTranscriptLines.filter(l => l.text.toLowerCase().includes(transcriptSearch.toLowerCase())).length === 0 && (
+                  <p className="text-[11px] text-muted-foreground text-center py-4">No results found</p>
                 )}
                 <div ref={transcriptEndRef} />
               </div>
