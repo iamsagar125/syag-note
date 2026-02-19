@@ -7,6 +7,7 @@ import { ModelSettingsProvider } from "@/contexts/ModelSettingsContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { NotesProvider } from "@/contexts/NotesContext";
 import { RecordingProvider } from "@/contexts/RecordingContext";
+import { CalendarProvider } from "@/contexts/CalendarContext";
 import { GlobalRecordingBanner } from "@/components/GlobalRecordingBanner";
 import { loadPreferences, applyAppearance } from "@/pages/SettingsPage";
 import { isOnboardingComplete } from "@/pages/OnboardingPage";
@@ -74,6 +75,7 @@ const App = () => (
     <FolderProvider>
     <NotesProvider>
     <RecordingProvider>
+    <CalendarProvider>
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -81,6 +83,7 @@ const App = () => (
           <AppContent />
         </BrowserRouter>
       </TooltipProvider>
+    </CalendarProvider>
     </RecordingProvider>
     </NotesProvider>
     </FolderProvider>
