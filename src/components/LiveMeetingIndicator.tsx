@@ -5,7 +5,6 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { loadPreferences } from "@/pages/SettingsPage";
 
 const POSITION_LS_KEY = "syag-indicator-y";
-const HIDDEN_LS_KEY = "syag-indicator-hidden";
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -27,9 +26,9 @@ export function LiveMeetingIndicator() {
   const location = useLocation();
   const [expanded, setExpanded] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [hidden, setHidden] = useState(() => {
-    try { return localStorage.getItem(HIDDEN_LS_KEY) === "true"; } catch { return false; }
-  });
+  // Only show after returning from a minimized/backgrounded tab
+  const [showAfterReturn, setShowAfterReturn] = useState(false);
+  const [manuallyHidden, setManuallyHidden] = useState(false);
   const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Drag state
@@ -48,10 +47,33 @@ export function LiveMeetingIndicator() {
     return () => clearInterval(id);
   }, [activeSession?.isRecording, activeSession?.elapsedSeconds]);
 
-  // Reset hidden state when a new session starts
+  // Listen for page visibility changes — show indicator when returning from background
   useEffect(() => {
-    if (activeSession) setHidden(false);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && activeSession?.isRecording) {
+        setShowAfterReturn(true);
+        setManuallyHidden(false);
+      } else if (document.visibilityState === "hidden") {
+        // Reset when leaving so it triggers again on return
+        setShowAfterReturn(false);
+        setExpanded(false);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [activeSession?.isRecording]);
+
+  // Reset when session changes
+  useEffect(() => {
+    setManuallyHidden(false);
+    setShowAfterReturn(false);
   }, [activeSession?.noteId]);
+
+  // Hide when user navigates within the app (they're actively using it)
+  useEffect(() => {
+    setShowAfterReturn(false);
+    setExpanded(false);
+  }, [location.pathname]);
 
   const scheduleCollapse = useCallback(() => {
     collapseTimer.current = setTimeout(() => setExpanded(false), 3000);
@@ -63,6 +85,18 @@ export function LiveMeetingIndicator() {
       collapseTimer.current = null;
     }
   }, []);
+
+  // Click-to-toggle expand (fallback for touch)
+  const handleClick = useCallback(() => {
+    if (didDrag.current) return;
+    if (!expanded) {
+      cancelCollapse();
+      setExpanded(true);
+    } else {
+      // When expanded, clicking the main area navigates to the session
+      navigate(`/new-note?session=${activeSession?.noteId}`);
+    }
+  }, [expanded, activeSession?.noteId, navigate, cancelCollapse]);
 
   // Drag handlers
   const onPointerDown = useCallback((e: React.PointerEvent) => {
@@ -93,8 +127,15 @@ export function LiveMeetingIndicator() {
 
   const prefs = loadPreferences();
 
-  // Hide on recording page, no session, indicator disabled in prefs, or manually hidden
-  if (!activeSession || location.pathname === "/new-note" || !prefs.showRecordingIndicator || hidden) return null;
+  // Only show when: active session, not on recording page, prefs enabled,
+  // not manually hidden, AND user just returned from background
+  if (
+    !activeSession ||
+    location.pathname === "/new-note" ||
+    !prefs.showRecordingIndicator ||
+    manuallyHidden ||
+    !showAfterReturn
+  ) return null;
 
   return (
     <>
@@ -139,10 +180,7 @@ export function LiveMeetingIndicator() {
             backdropFilter: "blur(12px)",
             transition: "width 0.35s cubic-bezier(0.4,0,0.2,1)",
           }}
-          onClick={() => {
-            if (didDrag.current) return; // ignore click after drag
-            navigate(`/new-note?session=${activeSession.noteId}`);
-          }}
+          onClick={handleClick}
         >
           {/* Favicon circle with pulse ring */}
           <div className="relative flex-shrink-0 flex items-center justify-center" style={{ width: 44, height: 44 }}>
@@ -175,8 +213,7 @@ export function LiveMeetingIndicator() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setHidden(true);
-                localStorage.setItem(HIDDEN_LS_KEY, "true");
+                setManuallyHidden(true);
               }}
               className="rounded-full p-1 text-background/40 hover:text-background/70 transition-colors flex-shrink-0"
               title="Hide indicator"
