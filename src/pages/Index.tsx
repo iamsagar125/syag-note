@@ -6,12 +6,20 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { AskBar } from "@/components/AskBar";
 import { useFolders } from "@/contexts/FolderContext";
 import { useNotes } from "@/contexts/NotesContext";
+import { useCalendar } from "@/contexts/CalendarContext";
+import { ICSDialog } from "@/components/ICSDialog";
+import { format, isToday as isTodayFn, isTomorrow, isAfter } from "date-fns";
 
 const Index = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { folders } = useFolders();
   const { notes, deleteNote, updateNoteFolder } = useNotes();
+  const { events, icsSource } = useCalendar();
+  const [icsOpen, setIcsOpen] = useState(false);
+
+  const now = new Date();
+  const upcomingEvents = events.filter(e => isAfter(e.start, now)).slice(0, 5);
 
   const activeFolderId = searchParams.get("folder");
   const activeFolder = activeFolderId ? folders.find((f) => f.id === activeFolderId) : null;
@@ -108,21 +116,52 @@ const Index = () => {
                   </button>
                 )}
               </div>
-              <div className="w-full rounded-xl border border-border bg-card/50 px-5 py-6 text-center">
-                <Calendar className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
-                <p className="text-sm font-medium text-foreground mb-1">Link your calendar</p>
-                <p className="text-xs text-muted-foreground mb-4">Connect your calendar to see upcoming meetings</p>
-                <div className="flex items-center justify-center gap-2">
-                  <button className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary transition-colors">
-                    <Link2 className="h-3.5 w-3.5" />
-                    Google Calendar
-                  </button>
-                  <button className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary transition-colors">
-                    <Link2 className="h-3.5 w-3.5" />
-                    Outlook
-                  </button>
+
+              {icsSource && upcomingEvents.length > 0 ? (
+                <div className="rounded-xl border border-border bg-card/50 divide-y divide-border">
+                  {upcomingEvents.map((evt) => {
+                    const dayLabel = isTodayFn(evt.start) ? "Today" : isTomorrow(evt.start) ? "Tomorrow" : format(evt.start, "EEE, MMM d");
+                    return (
+                      <div key={evt.id} className="flex items-center gap-3 px-4 py-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent flex-shrink-0">
+                          <Calendar className="h-4 w-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{evt.title}</p>
+                          <p className="text-[11px] text-muted-foreground">{dayLabel} · {format(evt.start, "h:mm a")}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="px-4 py-2">
+                    <button onClick={() => setIcsOpen(true)} className="text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                      Re-sync calendar
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : icsSource ? (
+                <div className="w-full rounded-xl border border-border bg-card/50 px-5 py-6 text-center">
+                  <Calendar className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-foreground mb-1">No upcoming events</p>
+                  <p className="text-xs text-muted-foreground">Your calendar is connected but no future events found</p>
+                </div>
+              ) : (
+                <div className="w-full rounded-xl border border-border bg-card/50 px-5 py-6 text-center">
+                  <Calendar className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
+                  <p className="text-sm font-medium text-foreground mb-1">Link your calendar</p>
+                  <p className="text-xs text-muted-foreground mb-4">Connect your calendar to see upcoming meetings</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <button onClick={() => setIcsOpen(true)} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary transition-colors">
+                      <Link2 className="h-3.5 w-3.5" />
+                      Google Calendar
+                    </button>
+                    <button onClick={() => setIcsOpen(true)} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary transition-colors">
+                      <Link2 className="h-3.5 w-3.5" />
+                      Outlook
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Notes list */}
@@ -183,6 +222,7 @@ const Index = () => {
           <AskBar context="home" />
         </div>
       </main>
+      <ICSDialog open={icsOpen} onOpenChange={setIcsOpen} />
     </div>
   );
 };
