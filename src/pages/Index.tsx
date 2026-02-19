@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteCardMenu } from "@/components/NoteCardMenu";
-import { Plus, FolderOpen, ArrowLeft, FileText, Calendar } from "lucide-react";
+import { Plus, FolderOpen, ArrowLeft, FileText, Calendar, Link2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AskBar } from "@/components/AskBar";
 import { useFolders } from "@/contexts/FolderContext";
@@ -108,14 +108,21 @@ const Index = () => {
                   </button>
                 )}
               </div>
-              <button
-                onClick={() => navigate("/settings")}
-                className="w-full rounded-xl border border-border bg-card/50 px-5 py-6 text-center transition-colors hover:bg-card hover:border-accent/40"
-              >
+              <div className="w-full rounded-xl border border-border bg-card/50 px-5 py-6 text-center">
                 <Calendar className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
-                <p className="text-sm font-medium text-foreground">Link your calendar</p>
-                <p className="text-xs text-muted-foreground mt-1">Connect your calendar to see upcoming meetings</p>
-              </button>
+                <p className="text-sm font-medium text-foreground mb-1">Link your calendar</p>
+                <p className="text-xs text-muted-foreground mb-4">Connect your calendar to see upcoming meetings</p>
+                <div className="flex items-center justify-center gap-2">
+                  <button className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary transition-colors">
+                    <Link2 className="h-3.5 w-3.5" />
+                    Google Calendar
+                  </button>
+                  <button className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-secondary transition-colors">
+                    <Link2 className="h-3.5 w-3.5" />
+                    Outlook
+                  </button>
+                </div>
+              </div>
             </div>
 
             {/* Notes list */}
