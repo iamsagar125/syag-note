@@ -354,59 +354,31 @@ export default function NewNotePage() {
               <AskBar
                 context="meeting"
                 meetingTitle={title || "New note"}
-                onResumeRecording={isStopped ? () => {
+                recordingState={recordingState}
+                transcriptVisible={transcriptVisible}
+                onResumeRecording={() => {
                   setRecordingState("recording");
                   setTranscriptVisible(true);
-                } : undefined}
+                }}
+                onPauseRecording={() => setRecordingState("paused")}
+                onStopRecording={handleStop}
+                onToggleTranscript={() => setTranscriptVisible(!transcriptVisible)}
                 leftSlot={
                   !isStopped ? (
-                    <div className="flex items-center gap-0 rounded-full border border-border bg-card shadow-lg overflow-hidden flex-shrink-0">
-                      <div className={cn(
-                        "flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium",
-                        recordingState === "recording"
-                          ? "bg-destructive/10 text-destructive"
-                          : "bg-secondary text-muted-foreground"
-                      )}>
-                        {recordingState === "recording" && (
-                          <span className="relative flex h-1.5 w-1.5">
-                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
-                            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-destructive" />
-                          </span>
-                        )}
-                        <Mic className="h-3 w-3" />
-                        <span>{elapsed}</span>
-                      </div>
-                      <button
-                        onClick={() => setTranscriptVisible(!transcriptVisible)}
-                        className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                      >
-                        {transcriptVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                        {transcriptVisible ? "Hide" : "Show"}
-                      </button>
-                      {recordingState === "recording" ? (
-                        <button
-                          onClick={() => setRecordingState("paused")}
-                          className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                        >
-                          <Pause className="h-3 w-3" />
-                          Pause
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setRecordingState("recording")}
-                          className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10"
-                        >
-                          <Play className="h-3 w-3" />
-                          Resume
-                        </button>
+                    <div className={cn(
+                      "flex items-center gap-1.5 rounded-full border border-border bg-card shadow-lg px-3 py-2.5 text-xs font-medium flex-shrink-0",
+                      recordingState === "recording"
+                        ? "bg-destructive/10 text-destructive"
+                        : "bg-secondary text-muted-foreground"
+                    )}>
+                      {recordingState === "recording" && (
+                        <span className="relative flex h-1.5 w-1.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
+                          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-destructive" />
+                        </span>
                       )}
-                      <button
-                        onClick={handleStop}
-                        className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
-                      >
-                        <Square className="h-3 w-3" />
-                        Stop
-                      </button>
+                      <Mic className="h-3 w-3" />
+                      <span>{elapsed}</span>
                     </div>
                   ) : undefined
                 }

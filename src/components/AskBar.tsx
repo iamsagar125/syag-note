@@ -9,6 +9,11 @@ interface AskBarProps {
   meetingTitle?: string;
   leftSlot?: React.ReactNode;
   onResumeRecording?: () => void;
+  onPauseRecording?: () => void;
+  onStopRecording?: () => void;
+  onToggleTranscript?: () => void;
+  transcriptVisible?: boolean;
+  recordingState?: "recording" | "paused" | "stopped";
 }
 
 const homeQuickActions = [
@@ -33,7 +38,7 @@ const recipes = [
   { icon: Zap, label: "Action plan", description: "Create an action plan with owners" },
 ];
 
-export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecording }: AskBarProps) {
+export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecording, onPauseRecording, onStopRecording, onToggleTranscript, transcriptVisible, recordingState }: AskBarProps) {
   const navigate = useNavigate();
   const { getActiveAIModelLabel, getAvailableAIModels, selectedAIModel, setSelectedAIModel } = useModelSettings();
 
@@ -191,17 +196,55 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
     return (
       <div className="px-4 pb-4 pointer-events-none">
       <div className="mx-auto max-w-2xl pointer-events-auto flex items-center gap-2">
-          {/* Left slot (recording controls) or equalizer button */}
-          {leftSlot ? leftSlot : context === "meeting" && (
+          {/* Recording indicator */}
+          {leftSlot}
+          {/* Equalizer button for meeting context */}
+          {context === "meeting" && (
             showEqualizerExpanded ? (
               <div className="flex items-center gap-0 rounded-full border border-border bg-card shadow-lg overflow-hidden flex-shrink-0">
-                <button
-                  onClick={onResumeRecording}
-                  className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10"
-                >
-                  <Play className="h-3 w-3" />
-                  Resume
-                </button>
+                {recordingState && recordingState !== "stopped" ? (
+                  <>
+                    <button
+                      onClick={onToggleTranscript}
+                      className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                    >
+                      {transcriptVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                      {transcriptVisible ? "Hide" : "Show"}
+                    </button>
+                    {recordingState === "recording" ? (
+                      <button
+                        onClick={onPauseRecording}
+                        className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                      >
+                        <Pause className="h-3 w-3" />
+                        Pause
+                      </button>
+                    ) : (
+                      <button
+                        onClick={onResumeRecording}
+                        className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10"
+                      >
+                        <Play className="h-3 w-3" />
+                        Resume
+                      </button>
+                    )}
+                    <button
+                      onClick={onStopRecording}
+                      className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
+                    >
+                      <Square className="h-3 w-3" />
+                      Stop
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={onResumeRecording}
+                    className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10"
+                  >
+                    <Play className="h-3 w-3" />
+                    Resume
+                  </button>
+                )}
                 <button
                   onClick={() => setShowEqualizerExpanded(false)}
                   className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
