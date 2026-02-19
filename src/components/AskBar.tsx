@@ -223,15 +223,24 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
               >
                 {elapsed && <span className="text-xs font-medium">{elapsed}</span>}
                 {recordingState === "recording" ? (
-                  <>
-                    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
-                      <rect x="1" y="6" width="2.5" height="7" rx="1" />
-                      <rect x="5" y="3" width="2.5" height="10" rx="1" />
-                      <rect x="9" y="5" width="2.5" height="8" rx="1" />
-                      <rect x="13" y="4" width="2.5" height="9" rx="1" />
-                    </svg>
-                    <Pause className="h-3 w-3" />
-                  </>
+                  <svg className="h-4 w-4 text-accent" viewBox="0 0 18 16" fill="currentColor">
+                    <rect x="1" y="6" width="2.5" height="7" rx="1">
+                      <animate attributeName="height" values="7;4;7" dur="0.8s" repeatCount="indefinite" />
+                      <animate attributeName="y" values="6;8;6" dur="0.8s" repeatCount="indefinite" />
+                    </rect>
+                    <rect x="5.5" y="3" width="2.5" height="10" rx="1">
+                      <animate attributeName="height" values="10;5;10" dur="0.6s" repeatCount="indefinite" />
+                      <animate attributeName="y" values="3;6;3" dur="0.6s" repeatCount="indefinite" />
+                    </rect>
+                    <rect x="10" y="5" width="2.5" height="8" rx="1">
+                      <animate attributeName="height" values="8;3;8" dur="0.7s" repeatCount="indefinite" />
+                      <animate attributeName="y" values="5;8;5" dur="0.7s" repeatCount="indefinite" />
+                    </rect>
+                    <rect x="14.5" y="4" width="2.5" height="9" rx="1">
+                      <animate attributeName="height" values="9;5;9" dur="0.9s" repeatCount="indefinite" />
+                      <animate attributeName="y" values="4;7;4" dur="0.9s" repeatCount="indefinite" />
+                    </rect>
+                  </svg>
                 ) : (
                   <Play className="h-3.5 w-3.5" />
                 )}
