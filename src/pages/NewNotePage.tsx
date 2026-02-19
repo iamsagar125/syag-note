@@ -226,126 +226,189 @@ export default function NewNotePage() {
 
         {/* Content area */}
         <div className="flex flex-1 overflow-hidden">
-          <div className="flex-1 overflow-y-auto pb-24">
-            <div className="mx-auto max-w-3xl px-8 py-6">
-              {/* Title */}
-              {isEditingTitle ? (
-                <input
-                  ref={titleRef}
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  onBlur={() => setIsEditingTitle(false)}
-                  onKeyDown={(e) => e.key === "Enter" && setIsEditingTitle(false)}
-                  className="mb-3 w-full font-display text-2xl text-foreground bg-transparent border-none outline-none focus:ring-0"
-                  placeholder="New note"
-                />
-              ) : (
-                <h1
-                  onClick={() => setIsEditingTitle(true)}
-                  className={cn(
-                    "mb-3 font-display text-2xl cursor-text transition-colors leading-tight",
-                    title ? "text-foreground hover:text-foreground/80" : "text-foreground/40 hover:text-foreground/60"
-                  )}
-                >
-                  {title || "New note"}
-                </h1>
-              )}
-
-              {/* Meta chips */}
-              <div className="flex items-center gap-2 mb-6 flex-wrap relative">
-                <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
-                  <Calendar className="h-3 w-3" />
-                  Today
-                </span>
-                {isStopped && (
-                  <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
-                    <Clock className="h-3 w-3" />
-                    {elapsed}
-                  </span>
+          {/* Left: main content + ask bar */}
+          <div className="flex flex-1 flex-col min-w-0">
+            <div className="flex-1 overflow-y-auto pb-24">
+              <div className="mx-auto max-w-3xl px-8 py-6">
+                {/* Title */}
+                {isEditingTitle ? (
+                  <input
+                    ref={titleRef}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    onBlur={() => setIsEditingTitle(false)}
+                    onKeyDown={(e) => e.key === "Enter" && setIsEditingTitle(false)}
+                    className="mb-3 w-full font-display text-2xl text-foreground bg-transparent border-none outline-none focus:ring-0"
+                    placeholder="New note"
+                  />
+                ) : (
+                  <h1
+                    onClick={() => setIsEditingTitle(true)}
+                    className={cn(
+                      "mb-3 font-display text-2xl cursor-text transition-colors leading-tight",
+                      title ? "text-foreground hover:text-foreground/80" : "text-foreground/40 hover:text-foreground/60"
+                    )}
+                  >
+                    {title || "New note"}
+                  </h1>
                 )}
-                <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
-                  <Users className="h-3 w-3" />
-                  Me
-                </span>
-                {folderChip}
-              </div>
 
-              {/* Content: recording vs stopped */}
-              {!isStopped ? (
-                /* During recording: editable notes */
-                <textarea
-                  value={personalNotes}
-                  onChange={(e) => setPersonalNotes(e.target.value)}
-                  placeholder="Write notes..."
-                  className="min-h-[60vh] w-full resize-none bg-transparent text-[15px] text-foreground leading-relaxed placeholder:text-muted-foreground/50 focus:outline-none"
-                  autoFocus
-                />
-              ) : (
-                /* Stopped: personal notes on top, then AI summary below */
-                <div className="animate-fade-in">
-                  {/* Personal notes area at top - "Add your thoughts..." */}
-                  <div className="mb-6">
-                    <textarea
-                      value={personalNotes}
-                      onChange={(e) => setPersonalNotes(e.target.value)}
-                      placeholder="Add your thoughts..."
-                      className="min-h-[80px] w-full resize-none bg-transparent text-[15px] text-foreground leading-relaxed placeholder:text-muted-foreground/40 focus:outline-none"
-                    />
-                  </div>
-
-                  {/* AI sections - shown in ai-notes mode */}
-                  {viewMode === "ai-notes" && (
-                    <>
-                      <div className="mb-8">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Hash className="h-3.5 w-3.5 text-muted-foreground/60" />
-                          <h2 className="font-display text-base font-semibold text-foreground/70">Meeting Overview</h2>
-                        </div>
-                        <p className="text-[15px] leading-relaxed text-foreground/70 pl-6">{fakeSummary.overview}</p>
-                      </div>
-
-                      <div className="mb-8">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Hash className="h-3.5 w-3.5 text-muted-foreground/60" />
-                          <h2 className="font-display text-base font-semibold text-foreground/70">Key Points</h2>
-                        </div>
-                        <ul className="space-y-2 pl-6">
-                          {fakeSummary.keyPoints.map((point, i) => (
-                            <li key={i} className="flex gap-2.5 text-[15px] text-foreground/70 leading-relaxed">
-                              <span className="mt-2.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-foreground/30" />
-                              {point}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div className="mb-8">
-                        <div className="flex items-center gap-2 mb-3">
-                          <Hash className="h-3.5 w-3.5 text-muted-foreground/60" />
-                          <h2 className="font-display text-base font-semibold text-foreground/70">Next Steps</h2>
-                        </div>
-                        <div className="space-y-2 pl-6">
-                          {fakeSummary.nextSteps.map((item, i) => (
-                            <div key={i} className="flex items-start gap-2.5 text-[15px] leading-relaxed">
-                              {item.done ? (
-                                <CheckCircle2 className="mt-1 h-4 w-4 flex-shrink-0 text-accent" />
-                              ) : (
-                                <Circle className="mt-1 h-4 w-4 flex-shrink-0 text-foreground/30" />
-                              )}
-                              <div>
-                                <span className={cn(item.done ? "text-muted-foreground line-through" : "text-foreground/70")}>
-                                  {item.text}
-                                </span>
-                                <span className="text-xs text-muted-foreground ml-2">— {item.assignee}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </>
+                {/* Meta chips */}
+                <div className="flex items-center gap-2 mb-6 flex-wrap relative">
+                  <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
+                    <Calendar className="h-3 w-3" />
+                    Today
+                  </span>
+                  {isStopped && (
+                    <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
+                      <Clock className="h-3 w-3" />
+                      {elapsed}
+                    </span>
                   )}
+                  <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
+                    <Users className="h-3 w-3" />
+                    Me
+                  </span>
+                  {folderChip}
                 </div>
-              )}
+
+                {/* Content: recording vs stopped */}
+                {!isStopped ? (
+                  <textarea
+                    value={personalNotes}
+                    onChange={(e) => setPersonalNotes(e.target.value)}
+                    placeholder="Write notes..."
+                    className="min-h-[60vh] w-full resize-none bg-transparent text-[15px] text-foreground leading-relaxed placeholder:text-muted-foreground/50 focus:outline-none"
+                    autoFocus
+                  />
+                ) : (
+                  <div className="animate-fade-in">
+                    <div className="mb-6">
+                      <textarea
+                        value={personalNotes}
+                        onChange={(e) => setPersonalNotes(e.target.value)}
+                        placeholder="Add your thoughts..."
+                        className="min-h-[80px] w-full resize-none bg-transparent text-[15px] text-foreground leading-relaxed placeholder:text-muted-foreground/40 focus:outline-none"
+                      />
+                    </div>
+
+                    {viewMode === "ai-notes" && (
+                      <>
+                        <div className="mb-8">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Hash className="h-3.5 w-3.5 text-muted-foreground/60" />
+                            <h2 className="font-display text-base font-semibold text-foreground/70">Meeting Overview</h2>
+                          </div>
+                          <p className="text-[15px] leading-relaxed text-foreground/70 pl-6">{fakeSummary.overview}</p>
+                        </div>
+
+                        <div className="mb-8">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Hash className="h-3.5 w-3.5 text-muted-foreground/60" />
+                            <h2 className="font-display text-base font-semibold text-foreground/70">Key Points</h2>
+                          </div>
+                          <ul className="space-y-2 pl-6">
+                            {fakeSummary.keyPoints.map((point, i) => (
+                              <li key={i} className="flex gap-2.5 text-[15px] text-foreground/70 leading-relaxed">
+                                <span className="mt-2.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-foreground/30" />
+                                {point}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="mb-8">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Hash className="h-3.5 w-3.5 text-muted-foreground/60" />
+                            <h2 className="font-display text-base font-semibold text-foreground/70">Next Steps</h2>
+                          </div>
+                          <div className="space-y-2 pl-6">
+                            {fakeSummary.nextSteps.map((item, i) => (
+                              <div key={i} className="flex items-start gap-2.5 text-[15px] leading-relaxed">
+                                {item.done ? (
+                                  <CheckCircle2 className="mt-1 h-4 w-4 flex-shrink-0 text-accent" />
+                                ) : (
+                                  <Circle className="mt-1 h-4 w-4 flex-shrink-0 text-foreground/30" />
+                                )}
+                                <div>
+                                  <span className={cn(item.done ? "text-muted-foreground line-through" : "text-foreground/70")}>
+                                    {item.text}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground ml-2">— {item.assignee}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Ask bar - inside left column so it doesn't overlap transcript */}
+            <div className="relative">
+              <AskBar
+                context="meeting"
+                meetingTitle={title || "New note"}
+                onResumeRecording={isStopped ? () => {
+                  setRecordingState("recording");
+                  setTranscriptVisible(true);
+                } : undefined}
+                leftSlot={
+                  !isStopped ? (
+                    <div className="flex items-center gap-0 rounded-full border border-border bg-card shadow-lg overflow-hidden flex-shrink-0">
+                      <div className={cn(
+                        "flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium",
+                        recordingState === "recording"
+                          ? "bg-destructive/10 text-destructive"
+                          : "bg-secondary text-muted-foreground"
+                      )}>
+                        {recordingState === "recording" && (
+                          <span className="relative flex h-1.5 w-1.5">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
+                            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-destructive" />
+                          </span>
+                        )}
+                        <Mic className="h-3 w-3" />
+                        <span>{elapsed}</span>
+                      </div>
+                      <button
+                        onClick={() => setTranscriptVisible(!transcriptVisible)}
+                        className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                      >
+                        {transcriptVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                        {transcriptVisible ? "Hide" : "Show"}
+                      </button>
+                      {recordingState === "recording" ? (
+                        <button
+                          onClick={() => setRecordingState("paused")}
+                          className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                        >
+                          <Pause className="h-3 w-3" />
+                          Pause
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setRecordingState("recording")}
+                          className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10"
+                        >
+                          <Play className="h-3 w-3" />
+                          Resume
+                        </button>
+                      )}
+                      <button
+                        onClick={handleStop}
+                        className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
+                      >
+                        <Square className="h-3 w-3" />
+                        Stop
+                      </button>
+                    </div>
+                  ) : undefined
+                }
+              />
             </div>
           </div>
 
@@ -396,70 +459,6 @@ export default function NewNotePage() {
               </div>
             </div>
           )}
-        </div>
-
-        {/* Ask bar with recording controls */}
-        <div className="relative">
-          <AskBar
-            context="meeting"
-            meetingTitle={title || "New note"}
-            onResumeRecording={isStopped ? () => {
-              setRecordingState("recording");
-              setTranscriptVisible(true);
-            } : undefined}
-            leftSlot={
-              !isStopped ? (
-                <div className="flex items-center gap-0 rounded-full border border-border bg-card shadow-lg overflow-hidden flex-shrink-0">
-                  <div className={cn(
-                    "flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium",
-                    recordingState === "recording"
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-secondary text-muted-foreground"
-                  )}>
-                    {recordingState === "recording" && (
-                      <span className="relative flex h-1.5 w-1.5">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
-                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-destructive" />
-                      </span>
-                    )}
-                    <Mic className="h-3 w-3" />
-                    <span>{elapsed}</span>
-                  </div>
-                  <button
-                    onClick={() => setTranscriptVisible(!transcriptVisible)}
-                    className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                  >
-                    {transcriptVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                    {transcriptVisible ? "Hide" : "Show"}
-                  </button>
-                  {recordingState === "recording" ? (
-                    <button
-                      onClick={() => setRecordingState("paused")}
-                      className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                    >
-                      <Pause className="h-3 w-3" />
-                      Pause
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => setRecordingState("recording")}
-                      className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10"
-                    >
-                      <Play className="h-3 w-3" />
-                      Resume
-                    </button>
-                  )}
-                  <button
-                    onClick={handleStop}
-                    className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
-                  >
-                    <Square className="h-3 w-3" />
-                    Stop
-                  </button>
-                </div>
-              ) : undefined
-            }
-          />
         </div>
       </main>
     </div>
