@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Mic, MicOff, Clock, FileText, Settings, LogOut, Circle, Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SyagLogo } from "@/components/SyagLogo";
 
 interface MeetingStatus {
   active: boolean;
@@ -38,7 +39,7 @@ export function TrayMenu() {
         "flex items-center gap-2.5 px-4 py-3 border-b",
         isDark ? "border-[hsl(20,8%,17%)]" : "border-border"
       )}>
-        <img src="/favicon.png?v=2" alt="Syag" className="h-5 w-5 rounded" />
+        <SyagLogo size={20} />
         <span className="font-display text-sm">Syag</span>
         <div className="ml-auto flex items-center gap-2">
           <button

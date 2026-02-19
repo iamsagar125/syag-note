@@ -1,6 +1,7 @@
 import { useRecording } from "@/contexts/RecordingContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import { X, EyeOff } from "lucide-react";
+import { SyagLogo } from "@/components/SyagLogo";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { loadPreferences } from "@/pages/SettingsPage";
 
@@ -188,7 +189,7 @@ export function LiveMeetingIndicator() {
               className="absolute inset-0 rounded-full border-2 border-accent"
               style={{ animation: "indicator-pulse-ring 2s cubic-bezier(0,0,0.2,1) infinite" }}
             />
-            <img src="/favicon.png" alt="Syag" className="w-7 h-7 rounded-full object-cover relative z-10" />
+            <SyagLogo size={28} className="relative z-10" />
           </div>
 
           {/* Expanded content */}
