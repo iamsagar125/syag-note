@@ -1,7 +1,7 @@
 import {
   User, Mic, Globe, Calendar, Bell, Sparkles, Brain, Download,
   ChevronRight, Check, ExternalLink, Plus, Trash2, RefreshCw, HardDrive, Cloud,
-  Languages, Volume2, Save
+  Languages, Volume2, Save, Sliders, Monitor, Sun, Moon
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ import { useModelSettings, localModels, enterpriseProviders } from "@/contexts/M
 // ── Section nav ──────────────────────────────────────────────
 const sections = [
   { icon: User, label: "Account", id: "account" },
+  { icon: Sliders, label: "Preferences", id: "preferences" },
   { icon: Sparkles, label: "AI Models", id: "ai-models" },
   { icon: Mic, label: "Transcription", id: "transcription" },
   { icon: Languages, label: "Language", id: "language" },
@@ -59,6 +60,35 @@ function SectionHeader({ title, description }: { title: string; description?: st
 }
 
 const ACCOUNT_LS_KEY = "syag-account";
+const PREFS_LS_KEY = "syag-preferences";
+
+interface Preferences {
+  showRecordingIndicator: boolean;
+  launchOnStartup: boolean;
+  autoReposition: boolean;
+  appearance: "light" | "dark" | "system";
+}
+
+const defaultPrefs: Preferences = {
+  showRecordingIndicator: true,
+  launchOnStartup: false,
+  autoReposition: true,
+  appearance: "light",
+};
+
+function loadPreferences(): Preferences {
+  try {
+    const raw = localStorage.getItem(PREFS_LS_KEY);
+    if (raw) return { ...defaultPrefs, ...JSON.parse(raw) };
+  } catch {}
+  return defaultPrefs;
+}
+
+function savePreferences(prefs: Preferences) {
+  localStorage.setItem(PREFS_LS_KEY, JSON.stringify(prefs));
+}
+
+export { loadPreferences };
 
 function loadAccount() {
   try {
@@ -146,6 +176,15 @@ export default function SettingsPage() {
   });
   const toggle = (key: string) => setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  const [prefs, setPrefs] = useState<Preferences>(loadPreferences);
+  const updatePref = <K extends keyof Preferences>(key: K, value: Preferences[K]) => {
+    setPrefs((prev) => {
+      const next = { ...prev, [key]: value };
+      savePreferences(next);
+      return next;
+    });
+  };
+
   const [editingApiKey, setEditingApiKey] = useState<string | null>(null);
   const [tempApiKey, setTempApiKey] = useState("");
 
@@ -213,6 +252,49 @@ export default function SettingsPage() {
                 <div className="space-y-5">
                   <SectionHeader title="Account" description="Your personal information and preferences" />
                   <AccountSection />
+                </div>
+              )}
+
+              {/* ─── Preferences ─── */}
+              {active === "preferences" && (
+                <div className="space-y-5">
+                  <SectionHeader title="Preferences" description="Customize how Syag behaves and appears" />
+                  <div className="space-y-2">
+                    <SettingRow label="Live recording indicator" description="The floating indicator sits on the right of your screen and shows when you're transcribing">
+                      <Toggle enabled={prefs.showRecordingIndicator} onToggle={() => updatePref("showRecordingIndicator", !prefs.showRecordingIndicator)} />
+                    </SettingRow>
+                    <SettingRow label="Launch Syag on startup" description="Syag will open automatically when you log in">
+                      <Toggle enabled={prefs.launchOnStartup} onToggle={() => updatePref("launchOnStartup", !prefs.launchOnStartup)} />
+                    </SettingRow>
+                    <SettingRow label="Auto-reposition during meetings" description="Syag will move to the side when you join a meeting, so you can keep taking notes">
+                      <Toggle enabled={prefs.autoReposition} onToggle={() => updatePref("autoReposition", !prefs.autoReposition)} />
+                    </SettingRow>
+                  </div>
+                  <div>
+                    <label className="text-[13px] font-medium text-foreground mb-2 block">Appearance</label>
+                    <p className="text-[11px] text-muted-foreground mb-3">Select your interface color scheme</p>
+                    <div className="flex gap-2">
+                      {([
+                        { value: "light" as const, label: "Light", icon: Sun },
+                        { value: "dark" as const, label: "Dark", icon: Moon },
+                        { value: "system" as const, label: "System", icon: Monitor },
+                      ]).map((opt) => (
+                        <button
+                          key={opt.value}
+                          onClick={() => updatePref("appearance", opt.value)}
+                          className={cn(
+                            "flex items-center gap-2 rounded-md border px-4 py-2 text-[13px] font-medium transition-colors",
+                            prefs.appearance === opt.value
+                              ? "border-accent bg-accent/10 text-foreground"
+                              : "border-border bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                          )}
+                        >
+                          <opt.icon className="h-3.5 w-3.5" />
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 
