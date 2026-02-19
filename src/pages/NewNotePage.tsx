@@ -4,8 +4,8 @@ import { Sidebar } from "@/components/Sidebar";
 import { AskBar } from "@/components/AskBar";
 import {
   Mic, MicOff, Pause, Play, Eye, EyeOff, Square,
-  PanelLeftClose, PanelLeft, MoreHorizontal, Share2,
-  Calendar, Users, Plus, FolderOpen, Check, X
+  PanelLeftClose, PanelLeft,
+  Calendar, Users, Plus, FolderOpen, Check, X, Hash
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFolders } from "@/contexts/FolderContext";
@@ -89,8 +89,8 @@ export default function NewNotePage() {
       </div>
 
       <main className="flex flex-1 flex-col min-w-0">
-        {/* Top bar with back button */}
-        <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-border">
+        {/* Top bar - matches processed note style, no share/more for new notes */}
+        <div className="flex items-center justify-between px-4 pt-3 pb-0">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -103,79 +103,6 @@ export default function NewNotePage() {
               className="text-[13px] text-muted-foreground transition-colors hover:text-foreground"
             >
               ← Back to notes
-            </button>
-          </div>
-
-          {/* Recording controls */}
-          <div className="flex items-center gap-2">
-            {recordingState !== "stopped" && (
-              <>
-                <div className={cn(
-                  "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium",
-                  recordingState === "recording"
-                    ? "bg-destructive/10 text-destructive"
-                    : "bg-secondary text-muted-foreground"
-                )}>
-                  {recordingState === "recording" && (
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-destructive" />
-                    </span>
-                  )}
-                  <Mic className="h-3 w-3" />
-                  <span>{elapsed}</span>
-                </div>
-
-                <button
-                  onClick={() => setTranscriptVisible(!transcriptVisible)}
-                  className="flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                >
-                  {transcriptVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                  {transcriptVisible ? "Hide" : "Show"}
-                </button>
-
-                {recordingState === "recording" ? (
-                  <button
-                    onClick={() => setRecordingState("paused")}
-                    className="flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-                  >
-                    <Pause className="h-3 w-3" />
-                    Pause
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setRecordingState("recording")}
-                    className="flex items-center gap-1 rounded-md bg-accent/10 px-2 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/20"
-                  >
-                    <Play className="h-3 w-3" />
-                    Resume
-                  </button>
-                )}
-
-                <button
-                  onClick={handleStop}
-                  className="flex items-center gap-1 rounded-md bg-destructive/10 px-2 py-1.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/20"
-                >
-                  <Square className="h-3 w-3" />
-                  Stop
-                </button>
-              </>
-            )}
-
-            {recordingState === "stopped" && (
-              <div className="flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                <MicOff className="h-3 w-3" />
-                Recording ended · {elapsed}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
-              <Share2 className="h-3.5 w-3.5" />
-            </button>
-            <button className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
-              <MoreHorizontal className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -193,14 +120,14 @@ export default function NewNotePage() {
                   onChange={(e) => setTitle(e.target.value)}
                   onBlur={() => setIsEditingTitle(false)}
                   onKeyDown={(e) => e.key === "Enter" && setIsEditingTitle(false)}
-                  className="mb-3 w-full font-display text-3xl text-foreground bg-transparent border-none outline-none focus:ring-0"
+                  className="mb-3 w-full font-display text-2xl text-foreground bg-transparent border-none outline-none focus:ring-0"
                   placeholder="New note"
                 />
               ) : (
                 <h1
                   onClick={() => setIsEditingTitle(true)}
                   className={cn(
-                    "mb-3 font-display text-3xl cursor-text transition-colors",
+                    "mb-3 font-display text-2xl cursor-text transition-colors leading-tight",
                     title ? "text-foreground hover:text-foreground/80" : "text-foreground/40 hover:text-foreground/60"
                   )}
                 >
@@ -209,7 +136,7 @@ export default function NewNotePage() {
               )}
 
               {/* Meta chips */}
-              <div className="flex items-center gap-2 mb-6 relative">
+              <div className="flex items-center gap-2 mb-6 flex-wrap relative">
                 <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
                   <Calendar className="h-3 w-3" />
                   Today
@@ -341,9 +268,69 @@ export default function NewNotePage() {
           )}
         </div>
 
-        {/* Ask bar */}
+        {/* Ask bar with recording controls as leftSlot */}
         <div className="relative">
-          <AskBar context="meeting" meetingTitle={title || "New note"} />
+          <AskBar
+            context="meeting"
+            meetingTitle={title || "New note"}
+            leftSlot={
+              recordingState !== "stopped" ? (
+                <div className="flex items-center gap-0 rounded-full border border-border bg-card shadow-lg overflow-hidden flex-shrink-0">
+                  <div className={cn(
+                    "flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium",
+                    recordingState === "recording"
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-secondary text-muted-foreground"
+                  )}>
+                    {recordingState === "recording" && (
+                      <span className="relative flex h-1.5 w-1.5">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive opacity-75" />
+                        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-destructive" />
+                      </span>
+                    )}
+                    <Mic className="h-3 w-3" />
+                    <span>{elapsed}</span>
+                  </div>
+                  <button
+                    onClick={() => setTranscriptVisible(!transcriptVisible)}
+                    className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                  >
+                    {transcriptVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                    {transcriptVisible ? "Hide" : "Show"}
+                  </button>
+                  {recordingState === "recording" ? (
+                    <button
+                      onClick={() => setRecordingState("paused")}
+                      className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                    >
+                      <Pause className="h-3 w-3" />
+                      Pause
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setRecordingState("recording")}
+                      className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/10"
+                    >
+                      <Play className="h-3 w-3" />
+                      Resume
+                    </button>
+                  )}
+                  <button
+                    onClick={handleStop}
+                    className="flex items-center gap-1 px-3 py-2.5 text-[11px] font-medium text-destructive transition-colors hover:bg-destructive/10"
+                  >
+                    <Square className="h-3 w-3" />
+                    Stop
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 rounded-full border border-border bg-card shadow-lg px-3 py-2.5 text-xs font-medium text-muted-foreground flex-shrink-0">
+                  <MicOff className="h-3 w-3" />
+                  Recording ended · {elapsed}
+                </div>
+              )
+            }
+          />
         </div>
       </main>
     </div>
