@@ -2,6 +2,7 @@ import { useRecording } from "@/contexts/RecordingContext";
 import { useNavigate, useLocation } from "react-router-dom";
 import { X } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { loadPreferences } from "@/pages/SettingsPage";
 
 function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
@@ -36,8 +37,10 @@ export function LiveMeetingIndicator() {
     }
   }, []);
 
-  // Hide on recording page or no session
-  if (!activeSession || location.pathname === "/new-note") return null;
+  const prefs = loadPreferences();
+
+  // Hide on recording page, no session, or indicator disabled
+  if (!activeSession || location.pathname === "/new-note" || !prefs.showRecordingIndicator) return null;
 
   return (
     <>
