@@ -293,28 +293,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
         {/* Floating chat panel */}
         {showChat && messages.length > 0 && (
           <div className="mb-2 rounded-2xl border border-border bg-card shadow-xl overflow-hidden">
-            {/* Chat header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <button className="flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground transition-colors">
-                {chatTitle}
-                <ChevronDown className="h-3 w-3 text-muted-foreground" />
-              </button>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleNewChat}
-                  className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1 text-xs text-foreground hover:bg-secondary transition-colors"
-                >
-                  <PenSquare className="h-3 w-3" />
-                  New chat
-                </button>
-                <button
-                  onClick={() => { setShowChat(false); setMessages([]); setExpanded(false); setChatTitle("New chat"); }}
-                  className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
 
             {/* Chat messages */}
             <div className="max-h-72 overflow-y-auto px-4 py-3 space-y-3">
