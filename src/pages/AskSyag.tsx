@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Sparkles, ArrowUp } from "lucide-react";
+import { Sparkles, ArrowUp, Mic, Paperclip, ChevronDown, LayoutGrid } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { cn } from "@/lib/utils";
@@ -9,18 +9,23 @@ interface Message {
   text: string;
 }
 
-const suggestions = [
-  "What were the key decisions from last week?",
-  "Summarize all action items assigned to me",
-  "What did we discuss about the product roadmap?",
-  "Any updates on hiring?",
+const recipes = [
+  { label: "Streamline my calendar", color: "bg-blue-400/70" },
+  { label: "List recent todos", color: "bg-emerald-400/70" },
+  { label: "Coach me", color: "bg-amber-400/70" },
+  { label: "Write weekly recap", color: "bg-orange-400/70" },
+  { label: "Blind spots", color: "bg-lime-500/70" },
 ];
+
+type Scope = "My notes" | "All meetings";
 
 export default function AskSyag() {
   const { getActiveAIModelLabel } = useModelSettings();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [scope, setScope] = useState<Scope>("My notes");
+  const [showScopeMenu, setShowScopeMenu] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -37,7 +42,6 @@ export default function AskSyag() {
     setMessages((prev) => [...prev, { role: "user", text: question }]);
     setIsLoading(true);
 
-    // Simulate AI response
     setTimeout(() => {
       setMessages((prev) => [
         ...prev,
@@ -63,27 +67,86 @@ export default function AskSyag() {
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
       <main className="flex flex-1 flex-col min-w-0">
-        {/* Scrollable message area */}
+        {/* Scrollable area */}
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {isEmpty ? (
-            <div className="flex h-full flex-col items-center justify-center text-center px-6">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 mb-4">
-                <Sparkles className="h-6 w-6 text-accent" />
-              </div>
-              <h2 className="font-display text-xl text-foreground mb-1">What would you like to know?</h2>
-              <p className="mb-6 max-w-sm text-[13px] text-muted-foreground">
-                Ask me anything about your meetings — decisions, action items, and insights.
-              </p>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 max-w-md w-full">
-                {suggestions.map((s) => (
+            <div className="flex h-full flex-col items-center justify-center px-6">
+              {/* Title */}
+              <h1 className="font-display text-2xl text-foreground mb-6">Ask anything about your notes</h1>
+
+              {/* Input card */}
+              <div className="w-full max-w-xl rounded-2xl border border-border bg-card shadow-sm p-4 mb-5">
+                {/* Scope row */}
+                <div className="flex items-center gap-1.5 mb-3 relative">
+                  <span className="text-sm font-medium text-foreground">{scope}</span>
                   <button
-                    key={s}
-                    onClick={() => handleSend(s)}
-                    className="rounded-lg border border-border bg-card p-3 text-left text-[13px] text-foreground transition-all hover:border-ring/20 hover:shadow-sm"
+                    onClick={() => setShowScopeMenu(!showScopeMenu)}
+                    className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary transition-colors"
                   >
-                    {s}
+                    {scope === "My notes" ? "All meetings" : "My notes"}
+                    <ChevronDown className="h-3 w-3" />
+                  </button>
+                  {showScopeMenu && (
+                    <div className="absolute top-full left-0 mt-1 rounded-lg border border-border bg-card shadow-lg py-1 z-10">
+                      {(["My notes", "All meetings"] as Scope[]).map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => { setScope(s); setShowScopeMenu(false); }}
+                          className={cn(
+                            "block w-full text-left px-4 py-1.5 text-sm transition-colors hover:bg-secondary",
+                            s === scope ? "text-accent font-medium" : "text-foreground"
+                          )}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {/* Input row */}
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={inputRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type / for recipes"
+                    className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none min-w-0"
+                  />
+                  <span className="text-xs text-muted-foreground flex-shrink-0">Auto</span>
+                  <button className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+                    <Paperclip className="h-4 w-4" />
+                  </button>
+                  <button className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
+                    <Mic className="h-4 w-4" />
+                  </button>
+                  {input.trim() && (
+                    <button
+                      onClick={() => handleSend()}
+                      className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-accent-foreground transition-all hover:opacity-90 flex-shrink-0"
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Recipe chips */}
+              <div className="flex flex-wrap items-center justify-center gap-2 max-w-xl">
+                {recipes.map((r) => (
+                  <button
+                    key={r.label}
+                    onClick={() => handleSend(r.label)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground transition-all hover:shadow-sm hover:border-ring/20"
+                  >
+                    <span className={cn("h-2.5 w-1 rounded-full", r.color)} />
+                    {r.label}
                   </button>
                 ))}
+                <button className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-all hover:shadow-sm hover:border-ring/20">
+                  <LayoutGrid className="h-3 w-3" />
+                  All recipes
+                </button>
               </div>
             </div>
           ) : (
@@ -125,29 +188,30 @@ export default function AskSyag() {
           )}
         </div>
 
-        {/* Full-width input bar */}
-        <div className="border-t border-border px-4 py-3">
-          <div className="mx-auto max-w-2xl flex items-center gap-2">
-            <div className="flex flex-1 items-center rounded-full border border-border bg-card shadow-sm px-4 py-2.5">
-              <input
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask anything..."
-                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none min-w-0"
-              />
-              {input.trim() && (
-                <button
-                  onClick={() => handleSend()}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-accent text-accent-foreground transition-all hover:opacity-90 ml-2 flex-shrink-0"
-                >
-                  <ArrowUp className="h-3 w-3" />
-                </button>
-              )}
+        {/* Bottom input when in chat mode */}
+        {!isEmpty && (
+          <div className="border-t border-border px-4 py-3">
+            <div className="mx-auto max-w-2xl flex items-center gap-2">
+              <div className="flex flex-1 items-center rounded-full border border-border bg-card shadow-sm px-4 py-2.5">
+                <input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask anything..."
+                  className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none min-w-0"
+                />
+                {input.trim() && (
+                  <button
+                    onClick={() => handleSend()}
+                    className="flex h-6 w-6 items-center justify-center rounded-full bg-accent text-accent-foreground transition-all hover:opacity-90 ml-2 flex-shrink-0"
+                  >
+                    <ArrowUp className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </main>
     </div>
   );
