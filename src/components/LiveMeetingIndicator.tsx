@@ -1,6 +1,6 @@
 import { useRecording } from "@/contexts/RecordingContext";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Square, Pause } from "lucide-react";
+import { Square } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import { loadPreferences } from "@/pages/SettingsPage";
 
@@ -41,14 +41,14 @@ export function LiveMeetingIndicator() {
 
   const prefs = loadPreferences();
 
+  // Only show when actively recording; hide when paused so it doesn't persist
   if (
     !activeSession ||
+    !activeSession.isRecording ||
     location.pathname === "/new-note" ||
     !prefs.showRecordingIndicator ||
     manuallyHidden
   ) return null;
-
-  const isPaused = !activeSession.isRecording;
 
   return (
     <div
@@ -70,16 +70,10 @@ export function LiveMeetingIndicator() {
           boxShadow: "0 4px 24px rgba(0,0,0,0.2), 0 1px 6px rgba(0,0,0,0.1)",
         }}
       >
-        {/* Recording / Paused dot */}
+        {/* Recording dot (indicator only shows when actively recording) */}
         <div className="relative flex items-center justify-center">
-          {!isPaused && (
-            <span className="absolute h-3 w-3 rounded-full bg-red-500 animate-ping opacity-50" />
-          )}
-          {isPaused ? (
-            <Pause className="h-3 w-3 text-amber-400" />
-          ) : (
-            <span className="relative h-2.5 w-2.5 rounded-full bg-red-500" />
-          )}
+          <span className="absolute h-3 w-3 rounded-full bg-red-500 animate-ping opacity-50" />
+          <span className="relative h-2.5 w-2.5 rounded-full bg-red-500" />
         </div>
 
         {/* Title */}
