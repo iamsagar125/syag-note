@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { ArrowUp, X, FileText, Play, Eye, EyeOff } from "lucide-react";
+import { ArrowUp, X, FileText, Play, Eye, EyeOff, Sparkles, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 
@@ -9,14 +9,16 @@ interface AskBarProps {
   leftSlot?: React.ReactNode;
   onResumeRecording?: () => void;
   onPauseRecording?: () => void;
-  onStopRecording?: () => void;
+  onGenerateNotes?: () => void;
   onToggleTranscript?: () => void;
   transcriptVisible?: boolean;
   recordingState?: "recording" | "paused" | "stopped";
+  isSummarizing?: boolean;
+  hasSummary?: boolean;
   elapsed?: string;
 }
 
-export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecording, onPauseRecording, onStopRecording, onToggleTranscript, transcriptVisible, recordingState, elapsed }: AskBarProps) {
+export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecording, onPauseRecording, onGenerateNotes, onToggleTranscript, transcriptVisible, recordingState, isSummarizing, hasSummary, elapsed }: AskBarProps) {
   const { getActiveAIModelLabel } = useModelSettings();
 
   const [input, setInput] = useState("");
@@ -30,7 +32,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
   const hasInput = input.trim().length > 0;
   const contextLabel = context === "meeting" ? meetingTitle || "This note" : "All notes";
 
-  // Click outside to close chat and deactivate
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (barRef.current && !barRef.current.contains(e.target as Node)) {
@@ -46,7 +47,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
     }
   }, [isActive, showChat]);
 
-  // Auto-scroll chat
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
@@ -86,14 +86,16 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
     setMessages([]);
   };
 
+  const showGenerateButton = recordingState === "paused" && !hasSummary && !isSummarizing;
+  const showGeneratingState = recordingState === "paused" && isSummarizing;
+
   return (
     <div ref={barRef} className="px-4 pb-4 pointer-events-none relative">
       <div className="mx-auto max-w-md pointer-events-auto">
-        {/* Floating chat panel - fixed height, scrollable */}
+        {/* Floating chat panel */}
         {showChat && messages.length > 0 && (
           <div className="absolute bottom-full left-4 right-4 mb-2 mx-auto max-w-md">
             <div className="rounded-2xl border border-border bg-card shadow-xl overflow-hidden">
-              {/* Chat header */}
               <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
                 <div className="flex items-center gap-2">
                   <FileText className="h-3.5 w-3.5 text-muted-foreground" />
@@ -108,8 +110,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-
-              {/* Chat messages - fixed height, scrollable */}
               <div ref={scrollRef} className="h-64 overflow-y-auto px-4 py-3 space-y-3">
                 {messages.map((msg, i) => (
                   <div key={i} className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
@@ -132,10 +132,9 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
 
         {/* Bar row with controls */}
         <div className="flex items-center gap-2">
-          {/* Recording indicator */}
           {leftSlot}
 
-          {/* Recording controls for meeting context */}
+          {/* Recording controls -- active meeting */}
           {context === "meeting" && recordingState && recordingState !== "stopped" && (
             <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
@@ -145,15 +144,36 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
               >
                 {transcriptVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </button>
+
+              {/* "Generate notes" button -- shown when paused and no notes yet */}
+              {showGenerateButton && (
+                <button
+                  onClick={onGenerateNotes}
+                  className="flex items-center gap-1.5 rounded-full border border-accent/30 bg-accent/10 shadow-lg px-3.5 py-2.5 text-accent hover:bg-accent/20 transition-colors"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span className="text-xs font-medium">Generate notes</span>
+                </button>
+              )}
+
+              {/* Generating state */}
+              {showGeneratingState && (
+                <div className="flex items-center gap-1.5 rounded-full border border-border bg-card shadow-lg px-3.5 py-2.5 text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span className="text-xs font-medium">Generating...</span>
+                </div>
+              )}
+
+              {/* Pause / Resume toggle with timer */}
               <button
-                onClick={recordingState === "recording" ? onStopRecording : onResumeRecording}
+                onClick={recordingState === "recording" ? onPauseRecording : onResumeRecording}
                 className={cn(
                   "flex items-center gap-1.5 rounded-full border shadow-lg px-3 py-2.5 transition-colors",
                   recordingState === "recording"
                     ? "border-border bg-card text-muted-foreground hover:text-foreground"
                     : "border-accent/30 bg-accent/10 text-accent hover:bg-accent/20"
                 )}
-                title={recordingState === "recording" ? "Stop recording" : "Resume recording"}
+                title={recordingState === "recording" ? "Pause recording" : "Resume recording"}
               >
                 {elapsed && <span className="text-xs font-medium">{elapsed}</span>}
                 {recordingState === "recording" ? (
@@ -182,6 +202,7 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
             </div>
           )}
 
+          {/* Stopped -- meeting ended, only transcript toggle */}
           {context === "meeting" && recordingState === "stopped" && (
             <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
@@ -191,17 +212,10 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
               >
                 {transcriptVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </button>
-              <button
-                onClick={onResumeRecording}
-                className="flex items-center justify-center rounded-full border border-accent/30 bg-accent/10 shadow-lg w-10 h-10 text-accent hover:bg-accent/20 transition-colors"
-                title="Resume recording"
-              >
-                <Play className="h-3.5 w-3.5" />
-              </button>
             </div>
           )}
 
-          {/* The pill bar - same shape always, just becomes editable on click */}
+          {/* The pill bar */}
           <div
             onClick={handleBarClick}
             className="flex flex-1 items-center rounded-full border border-border bg-card shadow-lg px-4 py-2.5 cursor-text"

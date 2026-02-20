@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 export interface SavedNote {
   id: string;
@@ -23,11 +24,12 @@ interface NotesContextType {
   deleteNote: (id: string) => void;
   updateNoteFolder: (noteId: string, folderId: string | null) => void;
   getNotesInFolder: (folderId: string) => SavedNote[];
+  refreshNotes: () => Promise<void>;
 }
 
 const STORAGE_KEY = "syag-notes";
 
-function loadNotes(): SavedNote[] {
+function loadNotesFromLS(): SavedNote[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : [];
@@ -36,7 +38,7 @@ function loadNotes(): SavedNote[] {
   }
 }
 
-function saveNotes(notes: SavedNote[]) {
+function saveNotesToLS(notes: SavedNote[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
   } catch {}
@@ -45,33 +47,63 @@ function saveNotes(notes: SavedNote[]) {
 const NotesContext = createContext<NotesContextType | undefined>(undefined);
 
 export function NotesProvider({ children }: { children: ReactNode }) {
-  const [notes, setNotes] = useState<SavedNote[]>(loadNotes);
+  const [notes, setNotes] = useState<SavedNote[]>(() => isElectron ? [] : loadNotesFromLS());
+  const api = getElectronAPI();
 
   useEffect(() => {
-    saveNotes(notes);
+    if (api) {
+      api.db.notes.getAll().then((dbNotes) => setNotes(dbNotes));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!api) saveNotesToLS(notes);
   }, [notes]);
+
+  const refreshNotes = useCallback(async () => {
+    if (api) {
+      const dbNotes = await api.db.notes.getAll();
+      setNotes(dbNotes);
+    }
+  }, [api]);
 
   const addNote = useCallback((note: SavedNote) => {
     setNotes((prev) => {
-      // Avoid duplicate if already saved
-      if (prev.some((n) => n.id === note.id)) return prev;
+      const existing = prev.findIndex((n) => n.id === note.id);
+      if (existing >= 0) {
+        const updated = [...prev];
+        updated[existing] = note;
+        return updated;
+      }
       return [note, ...prev];
     });
-  }, []);
+    if (api) {
+      api.db.notes.add(note).catch(console.error);
+    }
+  }, [api]);
 
   const updateNote = useCallback((id: string, updates: Partial<SavedNote>) => {
     setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, ...updates } : n)));
-  }, []);
+    if (api) {
+      api.db.notes.update(id, updates).catch(console.error);
+    }
+  }, [api]);
 
   const deleteNote = useCallback((id: string) => {
     setNotes((prev) => prev.filter((n) => n.id !== id));
-  }, []);
+    if (api) {
+      api.db.notes.delete(id).catch(console.error);
+    }
+  }, [api]);
 
   const updateNoteFolder = useCallback((noteId: string, folderId: string | null) => {
     setNotes((prev) =>
       prev.map((n) => (n.id === noteId ? { ...n, folderId } : n))
     );
-  }, []);
+    if (api) {
+      api.db.notes.updateFolder(noteId, folderId).catch(console.error);
+    }
+  }, [api]);
 
   const getNotesInFolder = useCallback(
     (folderId: string) => notes.filter((n) => n.folderId === folderId),
@@ -79,7 +111,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <NotesContext.Provider value={{ notes, addNote, updateNote, deleteNote, updateNoteFolder, getNotesInFolder }}>
+    <NotesContext.Provider value={{ notes, addNote, updateNote, deleteNote, updateNoteFolder, getNotesInFolder, refreshNotes }}>
       {children}
     </NotesContext.Provider>
   );

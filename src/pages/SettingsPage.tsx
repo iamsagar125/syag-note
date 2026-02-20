@@ -1,26 +1,47 @@
 import {
   User, Mic, Globe, Calendar, Bell, Sparkles, Brain, Download,
   ChevronRight, Check, ExternalLink, Plus, Trash2, RefreshCw, HardDrive, Cloud,
-  Languages, Volume2, Save, Sliders, Monitor, Sun, Moon
+  Volume2, Save, Sliders, Monitor, Sun, Moon
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useModelSettings, localModels, enterpriseProviders } from "@/contexts/ModelSettingsContext";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
-// ── Section nav ──────────────────────────────────────────────
 const sections = [
   { icon: User, label: "Account", id: "account" },
   { icon: Sliders, label: "Preferences", id: "preferences" },
   { icon: Sparkles, label: "AI Models", id: "ai-models" },
   { icon: Mic, label: "Transcription", id: "transcription" },
-  { icon: Languages, label: "Language", id: "language" },
   { icon: Calendar, label: "Calendar", id: "calendar" },
   { icon: Bell, label: "Notifications", id: "notifications" },
   { icon: Globe, label: "Integrations", id: "integrations" },
 ];
 
-// ── Toggle helper ────────────────────────────────────────────
+// Maps UI toggle keys to their database setting keys
+const TOGGLE_DB_KEYS: Record<string, string> = {
+  autoRecord: 'auto-record',
+  realTimeTranscribe: 'real-time-transcription',
+  aiSummaries: 'auto-generate-notes',
+  summaryReady: 'summary-ready-notification',
+  actionReminder: 'action-reminder-notification',
+  weeklyDigest: 'weekly-digest-notification',
+  calendarSync: 'calendar-sync',
+  showUpcoming: 'show-upcoming-meetings',
+};
+
+const DEFAULT_TOGGLES: Record<string, boolean> = {
+  autoRecord: true,
+  realTimeTranscribe: true,
+  aiSummaries: true,
+  summaryReady: true,
+  actionReminder: true,
+  weeklyDigest: false,
+  calendarSync: true,
+  showUpcoming: true,
+};
+
 function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
   return (
     <button
@@ -95,14 +116,12 @@ function applyAppearance(mode: Preferences["appearance"]) {
   } else if (mode === "light") {
     root.classList.remove("dark");
   } else {
-    // system
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     root.classList.toggle("dark", prefersDark);
   }
 }
 
 export { applyAppearance };
-
 export { loadPreferences };
 
 function loadAccount() {
@@ -111,6 +130,14 @@ function loadAccount() {
     if (raw) return JSON.parse(raw);
   } catch {}
   return { name: "", email: "", role: "", company: "" };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 function AccountSection() {
@@ -170,26 +197,50 @@ function AccountSection() {
 
 export default function SettingsPage() {
   const modelSettings = useModelSettings();
-  const { selectedAIModel, setSelectedAIModel, selectedSTTModel, setSelectedSTTModel, downloadStates, handleDownload, handleDeleteModel, connectedProviders, setConnectedProviders, useLocalModels, setUseLocalModels } = modelSettings;
+  const {
+    selectedAIModel, setSelectedAIModel,
+    selectedSTTModel, setSelectedSTTModel,
+    downloadStates, downloadProgress,
+    handleDownload, handleDeleteModel,
+    connectedProviders, setConnectedProviders,
+    connectProvider, disconnectProvider,
+    useLocalModels, setUseLocalModels
+  } = modelSettings;
   const [active, setActive] = useState("account");
 
-  // Toggles
-  const [toggles, setToggles] = useState<Record<string, boolean>>({
-    autoRecord: true,
-    realTimeTranscribe: true,
-    aiSummaries: true,
-    summaryReady: true,
-    actionReminder: true,
-    weeklyDigest: false,
-    shareByDefault: false,
-    calendarSync: true,
-    showUpcoming: true,
-    speakerLabels: true,
-    customVocab: false,
-    autoLanguageDetect: true,
-    
-  });
-  const toggle = (key: string) => setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
+  const [toggles, setToggles] = useState<Record<string, boolean>>({ ...DEFAULT_TOGGLES });
+  const [togglesLoaded, setTogglesLoaded] = useState(false);
+  const api = getElectronAPI();
+
+  // Load all toggle values from DB on mount
+  useEffect(() => {
+    if (!api) { setTogglesLoaded(true); return; }
+
+    (async () => {
+      const loaded = { ...DEFAULT_TOGGLES };
+      for (const [uiKey, dbKey] of Object.entries(TOGGLE_DB_KEYS)) {
+        try {
+          const val = await api.db.settings.get(dbKey);
+          if (val !== null) {
+            loaded[uiKey] = JSON.parse(val);
+          }
+        } catch {}
+      }
+      setToggles(loaded);
+      setTogglesLoaded(true);
+    })();
+  }, []);
+
+  const toggle = (key: string) => {
+    setToggles((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      const dbKey = TOGGLE_DB_KEYS[key];
+      if (api && dbKey) {
+        api.db.settings.set(dbKey, JSON.stringify(next[key])).catch(console.error);
+      }
+      return next;
+    });
+  };
 
   const [prefs, setPrefs] = useState<Preferences>(loadPreferences);
   const updatePref = <K extends keyof Preferences>(key: K, value: Preferences[K]) => {
@@ -197,6 +248,9 @@ export default function SettingsPage() {
       const next = { ...prev, [key]: value };
       savePreferences(next);
       if (key === "appearance") applyAppearance(value as Preferences["appearance"]);
+      if (key === "launchOnStartup" && api) {
+        api.app.setLoginItem(value as boolean).catch(console.error);
+      }
       return next;
     });
   };
@@ -204,18 +258,55 @@ export default function SettingsPage() {
   const [editingApiKey, setEditingApiKey] = useState<string | null>(null);
   const [tempApiKey, setTempApiKey] = useState("");
 
-  // Language
-  const [language, setLanguage] = useState("en");
-  const [transcriptLang, setTranscriptLang] = useState("auto");
+  // Custom vocabulary (persisted to DB)
   const [customTerms, setCustomTerms] = useState("");
+  const customTermsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleConnectProvider = (providerId: string) => {
+  useEffect(() => {
+    if (!api) return;
+    api.db.settings.get('custom-vocabulary').then(val => {
+      if (val) setCustomTerms(val);
+    }).catch(console.error);
+  }, []);
+
+  const handleCustomTermsChange = (value: string) => {
+    setCustomTerms(value);
+    if (customTermsTimerRef.current) clearTimeout(customTermsTimerRef.current);
+    customTermsTimerRef.current = setTimeout(() => {
+      if (api) {
+        api.db.settings.set('custom-vocabulary', value).catch(console.error);
+      }
+    }, 500);
+  };
+
+  // Audio input devices
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>("");
+
+  useEffect(() => {
+    navigator.mediaDevices.enumerateDevices().then(devices => {
+      setAudioDevices(devices.filter(d => d.kind === 'audioinput'));
+    }).catch(console.error);
+
+    if (api) {
+      api.db.settings.get('audio-input-device').then(val => {
+        if (val) setSelectedDeviceId(val);
+      }).catch(console.error);
+    }
+  }, []);
+
+  const handleDeviceChange = (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    if (api) {
+      api.db.settings.set('audio-input-device', deviceId).catch(console.error);
+    }
+  };
+
+  const handleConnectProvider = async (providerId: string) => {
     if (editingApiKey === providerId) {
-      // Save
-      setConnectedProviders((prev) => ({
-        ...prev,
-        [providerId]: { connected: true, apiKey: tempApiKey },
-      }));
+      if (tempApiKey.trim()) {
+        await connectProvider(providerId, tempApiKey.trim());
+      }
       setEditingApiKey(null);
       setTempApiKey("");
     } else {
@@ -224,12 +315,8 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDisconnectProvider = (providerId: string) => {
-    setConnectedProviders((prev) => {
-      const next = { ...prev };
-      delete next[providerId];
-      return next;
-    });
+  const handleDisconnectProvider = async (providerId: string) => {
+    await disconnectProvider(providerId);
   };
 
   return (
@@ -237,12 +324,10 @@ export default function SettingsPage() {
       <Sidebar />
 
       <main className="flex-1 overflow-y-auto">
-
         <div className="mx-auto max-w-3xl px-6 pt-4 pb-12">
           <h1 className="font-display text-2xl text-foreground mb-6">Settings</h1>
 
           <div className="flex gap-8">
-            {/* Side nav */}
             <nav className="flex w-40 flex-shrink-0 flex-col gap-0.5 sticky top-4 self-start">
               {sections.map((s) => (
                 <button
@@ -261,9 +346,7 @@ export default function SettingsPage() {
               ))}
             </nav>
 
-            {/* Content */}
             <div className="flex-1 min-w-0 animate-fade-in" key={active}>
-              {/* ─── Account ─── */}
               {active === "account" && (
                 <div className="space-y-5">
                   <SectionHeader title="Account" description="Your personal information and preferences" />
@@ -271,7 +354,6 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {/* ─── Preferences ─── */}
               {active === "preferences" && (
                 <div className="space-y-5">
                   <SectionHeader title="Preferences" description="Customize how Syag behaves and appears" />
@@ -311,13 +393,31 @@ export default function SettingsPage() {
                       ))}
                     </div>
                   </div>
+                  <div>
+                    <label className="text-[13px] font-medium text-foreground mb-2 block">Custom vocabulary</label>
+                    <p className="text-[11px] text-muted-foreground mb-2">Add company-specific terms to improve transcription accuracy. One term per line.</p>
+                    <textarea
+                      value={customTerms}
+                      onChange={(e) => handleCustomTermsChange(e.target.value)}
+                      placeholder={"Acme Corp\nProject Falcon\nQ3 Roadmap"}
+                      rows={4}
+                      className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 resize-none font-mono"
+                    />
+                  </div>
                 </div>
               )}
 
-              {/* ─── AI Models ─── */}
               {active === "ai-models" && (
                 <div className="space-y-6">
                   <SectionHeader title="AI Models" description="Choose which AI models power your notes and transcription. Use local models for privacy or connect to enterprise providers for maximum quality." />
+
+                  {!isElectron && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-3">
+                      <p className="text-[12px] text-amber-700 dark:text-amber-300">
+                        Running in web mode. Local model downloads require the desktop app. Cloud providers work in both modes.
+                      </p>
+                    </div>
+                  )}
 
                   {/* Default Model Selection */}
                   <div className="space-y-3">
@@ -330,7 +430,8 @@ export default function SettingsPage() {
                       onChange={(e) => setSelectedAIModel(e.target.value)}
                       className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
                     >
-                      <optgroup label="🖥 Local Models">
+                      <option value="">Select a model...</option>
+                      <optgroup label="Local Models">
                         {localModels.filter((m) => m.type === "llm" && downloadStates[m.id] === "downloaded").map((m) => (
                           <option key={m.id} value={`local:${m.id}`}>{m.name} (Local)</option>
                         ))}
@@ -360,7 +461,8 @@ export default function SettingsPage() {
                       onChange={(e) => setSelectedSTTModel(e.target.value)}
                       className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
                     >
-                      <optgroup label="🖥 Local Models">
+                      <option value="">Select a model...</option>
+                      <optgroup label="Local Models">
                         {localModels.filter((m) => m.type === "stt" && downloadStates[m.id] === "downloaded").map((m) => (
                           <option key={m.id} value={`local:${m.id}`}>{m.name} (Local)</option>
                         ))}
@@ -400,52 +502,68 @@ export default function SettingsPage() {
                     <div className="space-y-1.5">
                       {localModels.map((model) => {
                         const state = downloadStates[model.id] || "idle";
+                        const progress = downloadProgress[model.id];
                         return (
-                          <div key={model.id} className="flex items-center justify-between rounded-md border border-border bg-card p-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[13px] font-medium text-foreground">{model.name}</span>
-                                <span className={cn(
-                                  "rounded px-1.5 py-0.5 text-[9px] font-medium uppercase",
-                                  model.type === "stt" ? "bg-accent/10 text-accent" : "bg-primary/10 text-primary"
-                                )}>
-                                  {model.type === "stt" ? "Speech-to-Text" : "LLM"}
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-muted-foreground">{model.description} · {model.size}</p>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              {state === "idle" && (
-                                <button
-                                  onClick={() => handleDownload(model.id)}
-                                  className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-secondary transition-colors"
-                                >
-                                  <Download className="h-3 w-3" />
-                                  Download
-                                </button>
-                              )}
-                              {state === "downloading" && (
-                                <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-muted-foreground">
-                                  <RefreshCw className="h-3 w-3 animate-spin" />
-                                  Downloading...
-                                </div>
-                              )}
-                              {state === "downloaded" && (
-                                <>
-                                  <span className="flex items-center gap-1 text-[11px] text-accent font-medium">
-                                    <Check className="h-3 w-3" />
-                                    Ready
+                          <div key={model.id} className="rounded-md border border-border bg-card overflow-hidden">
+                            <div className="flex items-center justify-between p-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[13px] font-medium text-foreground">{model.name}</span>
+                                  <span className={cn(
+                                    "rounded px-1.5 py-0.5 text-[9px] font-medium uppercase",
+                                    model.type === "stt" ? "bg-accent/10 text-accent" : "bg-primary/10 text-primary"
+                                  )}>
+                                    {model.type === "stt" ? "Speech-to-Text" : "LLM"}
                                   </span>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground">{model.description} · {model.size}</p>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                {state === "idle" && (
                                   <button
-                                    onClick={() => handleDeleteModel(model.id)}
-                                    className="rounded p-1 text-muted-foreground hover:text-destructive transition-colors"
-                                    title="Remove model"
+                                    onClick={() => handleDownload(model.id)}
+                                    className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-secondary transition-colors"
                                   >
-                                    <Trash2 className="h-3 w-3" />
+                                    <Download className="h-3 w-3" />
+                                    Download
                                   </button>
-                                </>
-                              )}
+                                )}
+                                {state === "downloading" && (
+                                  <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-muted-foreground">
+                                    <RefreshCw className="h-3 w-3 animate-spin" />
+                                    {progress ? `${progress.percent}%` : 'Starting...'}
+                                  </div>
+                                )}
+                                {state === "downloaded" && (
+                                  <>
+                                    <span className="flex items-center gap-1 text-[11px] text-accent font-medium">
+                                      <Check className="h-3 w-3" />
+                                      Ready
+                                    </span>
+                                    <button
+                                      onClick={() => handleDeleteModel(model.id)}
+                                      className="rounded p-1 text-muted-foreground hover:text-destructive transition-colors"
+                                      title="Remove model"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </div>
+                            {state === "downloading" && progress && (
+                              <div className="px-3 pb-3">
+                                <div className="w-full h-1 rounded-full bg-secondary overflow-hidden">
+                                  <div
+                                    className="h-full bg-accent rounded-full transition-all duration-300"
+                                    style={{ width: `${progress.percent}%` }}
+                                  />
+                                </div>
+                                <p className="text-[10px] text-muted-foreground mt-1">
+                                  {formatBytes(progress.bytesDownloaded)} / {formatBytes(progress.totalBytes)}
+                                </p>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -458,7 +576,10 @@ export default function SettingsPage() {
                       <Cloud className="h-3.5 w-3.5" />
                       Enterprise & Cloud Providers
                     </h3>
-                    <p className="text-[11px] text-muted-foreground -mt-2">Connect your own API keys to use cloud models. Your keys are stored locally and encrypted.</p>
+                    <p className="text-[11px] text-muted-foreground -mt-2">
+                      Connect your own API keys to use cloud models.
+                      {isElectron ? " Your keys are stored securely in the system keychain." : " Your keys are stored locally in your browser."}
+                    </p>
 
                     <div className="space-y-1.5">
                       {enterpriseProviders.map((provider) => {
@@ -507,7 +628,6 @@ export default function SettingsPage() {
                               </div>
                             </div>
 
-                            {/* API Key input */}
                             {isEditing && (
                               <div className="px-3 pb-3 pt-0 border-t border-border mt-0">
                                 <div className="pt-3 space-y-2">
@@ -549,7 +669,6 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {/* ─── Transcription ─── */}
               {active === "transcription" && (
                 <div className="space-y-5">
                   <SectionHeader title="Transcription" description="Control how Syag listens and transcribes your meetings" />
@@ -560,81 +679,28 @@ export default function SettingsPage() {
                     <SettingRow label="Real-time transcription" description="Show live transcript during recording">
                       <Toggle enabled={toggles.realTimeTranscribe} onToggle={() => toggle("realTimeTranscribe")} />
                     </SettingRow>
-                    <SettingRow label="Speaker labels" description="Identify and label different speakers in the transcript">
-                      <Toggle enabled={toggles.speakerLabels} onToggle={() => toggle("speakerLabels")} />
-                    </SettingRow>
                     <SettingRow label="Auto-generate AI notes" description="Create summaries and action items when recording ends">
                       <Toggle enabled={toggles.aiSummaries} onToggle={() => toggle("aiSummaries")} />
                     </SettingRow>
                   </div>
                   <div>
                     <label className="text-[13px] font-medium text-foreground mb-2 block">Audio input device</label>
-                    <select className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20">
-                      <option>System Default</option>
-                      <option>MacBook Pro Microphone</option>
-                      <option>External USB Microphone</option>
-                      <option>AirPods Pro</option>
+                    <select
+                      value={selectedDeviceId}
+                      onChange={(e) => handleDeviceChange(e.target.value)}
+                      className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
+                    >
+                      <option value="">System Default</option>
+                      {audioDevices.map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {d.label || `Microphone (${d.deviceId.slice(0, 8)}...)`}
+                        </option>
+                      ))}
                     </select>
                   </div>
                 </div>
               )}
 
-              {/* ─── Language ─── */}
-              {active === "language" && (
-                <div className="space-y-5">
-                  <SectionHeader title="Language" description="Set your preferred languages for the app and transcription" />
-                  <div>
-                    <label className="text-[13px] font-medium text-foreground mb-2 block">App language</label>
-                    <select
-                      value={language}
-                      onChange={(e) => setLanguage(e.target.value)}
-                      className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
-                    >
-                      <option value="en">English</option>
-                      <option value="es">Español</option>
-                      <option value="fr">Français</option>
-                      <option value="de">Deutsch</option>
-                      <option value="ja">日本語</option>
-                      <option value="zh">中文</option>
-                      <option value="ko">한국어</option>
-                      <option value="pt">Português</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="text-[13px] font-medium text-foreground mb-2 block">Transcription language</label>
-                    <select
-                      value={transcriptLang}
-                      onChange={(e) => setTranscriptLang(e.target.value)}
-                      className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
-                    >
-                      <option value="auto">Auto-detect</option>
-                      <option value="en">English</option>
-                      <option value="es">Spanish</option>
-                      <option value="fr">French</option>
-                      <option value="de">German</option>
-                      <option value="ja">Japanese</option>
-                      <option value="zh">Chinese</option>
-                      <option value="ko">Korean</option>
-                    </select>
-                  </div>
-                  <SettingRow label="Auto-detect language" description="Automatically detect the spoken language during recording">
-                    <Toggle enabled={toggles.autoLanguageDetect} onToggle={() => toggle("autoLanguageDetect")} />
-                  </SettingRow>
-                  <div>
-                    <label className="text-[13px] font-medium text-foreground mb-2 block">Custom vocabulary</label>
-                    <p className="text-[11px] text-muted-foreground mb-2">Add company-specific terms to improve transcription accuracy. One term per line.</p>
-                    <textarea
-                      value={customTerms}
-                      onChange={(e) => setCustomTerms(e.target.value)}
-                      placeholder={"Acme Corp\nProject Falcon\nQ3 Roadmap"}
-                      rows={4}
-                      className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 resize-none font-mono"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* ─── Calendar ─── */}
               {active === "calendar" && (
                 <div className="space-y-5">
                   <SectionHeader title="Calendar" description="Manage your calendar connections and meeting preferences" />
@@ -665,7 +731,6 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              {/* ─── Notifications ─── */}
               {active === "notifications" && (
                 <div className="space-y-5">
                   <SectionHeader title="Notifications" description="Choose what you'd like to be notified about" />
@@ -683,8 +748,6 @@ export default function SettingsPage() {
                 </div>
               )}
 
-
-              {/* ─── Integrations ─── */}
               {active === "integrations" && (
                 <div className="space-y-5">
                   <SectionHeader title="Integrations" description="Connect third-party tools to enhance your workflow" />
@@ -692,12 +755,8 @@ export default function SettingsPage() {
                     {[
                       { name: "Google Calendar", desc: "Sync meetings and events" },
                       { name: "Slack", desc: "Share summaries to channels" },
-                      { name: "Notion", desc: "Export notes to Notion pages" },
-                      { name: "Linear", desc: "Create issues from action items" },
-                      { name: "Zoom", desc: "Record Zoom meetings directly" },
                       { name: "Microsoft Teams", desc: "Integrate with Teams calls" },
                       { name: "Jira", desc: "Create tickets from action items" },
-                      { name: "Confluence", desc: "Export notes as Confluence pages" },
                     ].map((item) => (
                       <div key={item.name} className="flex items-center justify-between rounded-md border border-border bg-card p-3">
                         <div>

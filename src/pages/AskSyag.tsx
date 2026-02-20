@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { ArrowUp, ChevronDown, ChevronRight, FileText, Square } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
+import { useNotes } from "@/contexts/NotesContext";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 import { cn } from "@/lib/utils";
 
@@ -19,23 +21,70 @@ const recipes = [
 ];
 
 export default function AskSyag() {
-  const { getActiveAIModelLabel } = useModelSettings();
-  
+  const { getActiveAIModelLabel, selectedAIModel } = useModelSettings();
+  const { notes } = useNotes();
+  const api = getElectronAPI();
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [useTranscripts, setUseTranscripts] = useState(true);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [streamingText, setStreamingText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  
-
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
+  }, [messages, streamingText]);
 
-  const handleSend = (text?: string, recipe?: { label: string; color: string }) => {
+  // Listen for streaming chat chunks
+  useEffect(() => {
+    if (!api) return;
+
+    const cleanup = api.llm.onChatChunk((chunk) => {
+      if (chunk.done) {
+        setStreamingText((current) => {
+          if (current) {
+            setMessages((prev) => [...prev, { role: "assistant", text: current }]);
+          }
+          return "";
+        });
+        setIsLoading(false);
+      } else {
+        setStreamingText((prev) => prev + chunk.text);
+      }
+    });
+
+    return cleanup;
+  }, [api]);
+
+  const buildNotesContext = useCallback(() => {
+    if (notes.length === 0) return "";
+
+    const relevantNotes = useTranscripts
+      ? notes.slice(0, 25)
+      : notes;
+
+    return relevantNotes.map((note) => {
+      const parts = [`## ${note.title} (${note.date})`];
+      if (useTranscripts && note.transcript?.length > 0) {
+        parts.push("Transcript: " + note.transcript.map(t => t.text).join(" "));
+      }
+      if (note.summary) {
+        parts.push("Summary: " + note.summary.overview);
+        if (note.summary.keyPoints?.length > 0) {
+          parts.push("Key Points: " + note.summary.keyPoints.join("; "));
+        }
+      }
+      if (note.personalNotes) {
+        parts.push("Notes: " + note.personalNotes);
+      }
+      return parts.join("\n");
+    }).join("\n\n");
+  }, [notes, useTranscripts]);
+
+  const handleSend = useCallback(async (text?: string, recipe?: { label: string; color: string }) => {
     const question = text || input.trim();
     if (!question) return;
     setInput("");
@@ -50,18 +99,51 @@ export default function AskSyag() {
 
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
+    setStreamingText("");
 
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          text: `[${modelLabel}] Here's what I found across your notes: Simulated response to "${question}".`,
-        },
-      ]);
-      setIsLoading(false);
-    }, 800);
-  };
+    if (api && selectedAIModel) {
+      try {
+        const notesContext = buildNotesContext();
+        const chatMessages = [...messages, userMsg].map(m => ({
+          role: m.role,
+          content: m.text,
+        }));
+
+        const response = await api.llm.chat({
+          messages: chatMessages,
+          context: { notes: notesContext },
+          model: selectedAIModel,
+        });
+
+        // If we got a direct response (non-streaming), add it
+        if (response && !streamingText) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", text: response },
+          ]);
+          setIsLoading(false);
+        }
+      } catch (err: any) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", text: `Error: ${err.message || 'Failed to get response. Check your model settings.'}` },
+        ]);
+        setIsLoading(false);
+      }
+    } else {
+      // Web fallback: simulated response
+      setTimeout(() => {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            text: `[${modelLabel || 'No model selected'}] Here's what I found across your notes: Simulated response to "${question}". Connect an AI model in Settings to get real responses.`,
+          },
+        ]);
+        setIsLoading(false);
+      }, 800);
+    }
+  }, [input, messages, getActiveAIModelLabel, useTranscripts, api, selectedAIModel, buildNotesContext, streamingText]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -168,7 +250,6 @@ export default function AskSyag() {
                 <div key={i} className={cn("animate-fade-in", msg.role === "user" ? "flex flex-col items-end gap-1.5" : "")}>
                   {msg.role === "user" ? (
                     <>
-                      {/* Context chip */}
                       {msg.context && (
                         <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm shadow-sm">
                           <FileText className="h-4 w-4 text-muted-foreground" />
@@ -178,7 +259,6 @@ export default function AskSyag() {
                           </div>
                         </div>
                       )}
-                      {/* Recipe chip or plain message */}
                       {msg.recipe ? (
                         <div className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-sm text-foreground shadow-sm">
                           <span className={cn("h-2.5 w-1 rounded-full", msg.recipe.color)} />
@@ -198,7 +278,15 @@ export default function AskSyag() {
                   )}
                 </div>
               ))}
-              {isLoading && (
+              {/* Streaming text display */}
+              {streamingText && (
+                <div className="animate-fade-in">
+                  <div className="text-[14px] leading-relaxed text-foreground whitespace-pre-line">
+                    {streamingText}
+                  </div>
+                </div>
+              )}
+              {isLoading && !streamingText && (
                 <div className="animate-fade-in">
                   <div className="flex gap-1 py-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-pulse" />

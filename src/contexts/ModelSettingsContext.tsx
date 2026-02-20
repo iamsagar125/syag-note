@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 export type ModelProvider = {
   id: string;
@@ -26,6 +27,7 @@ export type LocalModel = {
 };
 
 export const localModels: LocalModel[] = [
+  { id: "whisper-large-v3-turbo", name: "Whisper Large V3 Turbo", size: "1.6 GB", type: "stt", description: "Recommended — Nova-2 quality, 4x faster than Large V3" },
   { id: "whisper-large-v3", name: "Whisper Large V3", size: "3.1 GB", type: "stt", description: "Best accuracy, slower" },
   { id: "whisper-medium", name: "Whisper Medium", size: "1.5 GB", type: "stt", description: "Good balance of speed and accuracy" },
   { id: "whisper-small", name: "Whisper Small", size: "488 MB", type: "stt", description: "Fast, moderate accuracy" },
@@ -36,6 +38,7 @@ export const localModels: LocalModel[] = [
 ];
 
 type DownloadState = "idle" | "downloading" | "downloaded";
+type DownloadProgress = { percent: number; bytesDownloaded: number; totalBytes: number };
 
 const LS_KEY = "syag-model-settings";
 
@@ -65,10 +68,13 @@ interface ModelSettingsContextType {
   selectedSTTModel: string;
   setSelectedSTTModel: (model: string) => void;
   downloadStates: Record<string, DownloadState>;
+  downloadProgress: Record<string, DownloadProgress>;
   handleDownload: (modelId: string) => void;
   handleDeleteModel: (modelId: string) => void;
   connectedProviders: Record<string, { connected: boolean; apiKey: string }>;
   setConnectedProviders: React.Dispatch<React.SetStateAction<Record<string, { connected: boolean; apiKey: string }>>>;
+  connectProvider: (providerId: string, apiKey: string) => Promise<void>;
+  disconnectProvider: (providerId: string) => Promise<void>;
   useLocalModels: boolean;
   setUseLocalModels: (v: boolean) => void;
   getActiveAIModelLabel: () => string;
@@ -86,6 +92,7 @@ const defaults = {
 };
 
 export function ModelSettingsProvider({ children }: { children: ReactNode }) {
+  const api = getElectronAPI();
   const stored = loadFromStorage();
   const init = stored || defaults;
 
@@ -93,27 +100,156 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
   const [selectedSTTModel, setSelectedSTTModel] = useState(init.selectedSTTModel);
   const [useLocalModels, setUseLocalModels] = useState(init.useLocalModels);
   const [downloadStates, setDownloadStates] = useState<Record<string, DownloadState>>(init.downloadStates);
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, DownloadProgress>>({});
   const [connectedProviders, setConnectedProviders] = useState<Record<string, { connected: boolean; apiKey: string }>>(init.connectedProviders);
 
-  // Persist on change
+  // Sync download states from Electron main process on mount
   useEffect(() => {
-    saveToStorage({ selectedAIModel, selectedSTTModel, useLocalModels, downloadStates, connectedProviders });
+    if (!api) return;
+
+    api.models.list().then((downloaded) => {
+      const states: Record<string, DownloadState> = {};
+      for (const id of downloaded) states[id] = "downloaded";
+      setDownloadStates((prev) => ({ ...prev, ...states }));
+    });
+
+    // Load API keys from keychain
+    for (const provider of enterpriseProviders) {
+      api.keychain.get(provider.id).then((key) => {
+        if (key) {
+          setConnectedProviders((prev) => ({
+            ...prev,
+            [provider.id]: { connected: true, apiKey: key },
+          }));
+        }
+      });
+    }
+  }, []);
+
+  // Listen for download progress from main process
+  useEffect(() => {
+    if (!api) return;
+
+    const cleanupProgress = api.models.onDownloadProgress((progress) => {
+      setDownloadProgress((prev) => ({
+        ...prev,
+        [progress.modelId]: {
+          percent: progress.percent,
+          bytesDownloaded: progress.bytesDownloaded,
+          totalBytes: progress.totalBytes,
+        },
+      }));
+    });
+
+    const cleanupComplete = api.models.onDownloadComplete((data) => {
+      if (data.success) {
+        setDownloadStates((prev) => ({ ...prev, [data.modelId]: "downloaded" }));
+      } else {
+        setDownloadStates((prev) => {
+          const next = { ...prev };
+          delete next[data.modelId];
+          return next;
+        });
+        console.error(`Download failed for ${data.modelId}:`, data.error);
+      }
+      setDownloadProgress((prev) => {
+        const next = { ...prev };
+        delete next[data.modelId];
+        return next;
+      });
+    });
+
+    return () => {
+      cleanupProgress();
+      cleanupComplete();
+    };
+  }, []);
+
+  // Load settings from Electron DB on mount (localStorage may be empty in production Electron)
+  useEffect(() => {
+    if (!api) return;
+    api.db.settings.get('model-settings').then((raw: string | null) => {
+      if (!raw) return;
+      try {
+        const data = JSON.parse(raw);
+        if (data.selectedAIModel) setSelectedAIModel((prev: string) => prev || data.selectedAIModel);
+        if (data.selectedSTTModel) setSelectedSTTModel((prev: string) => prev || data.selectedSTTModel);
+        if (data.useLocalModels !== undefined) setUseLocalModels(data.useLocalModels);
+        if (data.downloadStates) setDownloadStates((prev) => ({ ...prev, ...data.downloadStates }));
+        if (data.connectedProviders) setConnectedProviders((prev) => ({ ...prev, ...data.connectedProviders }));
+      } catch { /* ignore corrupt data */ }
+    });
+  }, []);
+
+  // Auto-select first available STT model when none is configured
+  useEffect(() => {
+    if (selectedSTTModel) return;
+    const downloadedSTT = localModels.filter(m => m.type === 'stt' && downloadStates[m.id] === 'downloaded');
+    if (downloadedSTT.length > 0) {
+      setSelectedSTTModel(`local:${downloadedSTT[0].id}`);
+    }
+  }, [downloadStates, selectedSTTModel]);
+
+  // Persist to BOTH localStorage and DB so sync load always works
+  useEffect(() => {
+    const data = { selectedAIModel, selectedSTTModel, useLocalModels, downloadStates, connectedProviders };
+    saveToStorage(data);
+    if (api) {
+      api.db.settings.set('model-settings', JSON.stringify(data)).catch(console.error);
+    }
   }, [selectedAIModel, selectedSTTModel, useLocalModels, downloadStates, connectedProviders]);
 
-  const handleDownload = (modelId: string) => {
+  const handleDownload = useCallback((modelId: string) => {
     setDownloadStates((prev) => ({ ...prev, [modelId]: "downloading" }));
-    setTimeout(() => {
-      setDownloadStates((prev) => ({ ...prev, [modelId]: "downloaded" }));
-    }, 3000);
-  };
 
-  const handleDeleteModel = (modelId: string) => {
+    if (api) {
+      api.models.download(modelId).catch((err) => {
+        console.error('Download failed:', err);
+        setDownloadStates((prev) => {
+          const next = { ...prev };
+          delete next[modelId];
+          return next;
+        });
+      });
+    } else {
+      // Web fallback: simulate download
+      setTimeout(() => {
+        setDownloadStates((prev) => ({ ...prev, [modelId]: "downloaded" }));
+      }, 3000);
+    }
+  }, [api]);
+
+  const handleDeleteModel = useCallback((modelId: string) => {
     setDownloadStates((prev) => {
       const next = { ...prev };
       delete next[modelId];
       return next;
     });
-  };
+    if (api) {
+      api.models.delete(modelId).catch(console.error);
+    }
+  }, [api]);
+
+  const connectProvider = useCallback(async (providerId: string, apiKey: string) => {
+    if (api) {
+      await api.keychain.set(providerId, apiKey);
+    }
+    setConnectedProviders((prev) => ({
+      ...prev,
+      [providerId]: { connected: true, apiKey },
+    }));
+  }, [api]);
+
+  const disconnectProvider = useCallback(async (providerId: string) => {
+    if (api) {
+      await api.keychain.delete(providerId);
+    }
+    setConnectedProviders((prev) => {
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
+  }, [api]);
 
   const getActiveAIModelLabel = (): string => {
     if (selectedAIModel.startsWith("local:")) {
@@ -149,8 +285,10 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
       value={{
         selectedAIModel, setSelectedAIModel,
         selectedSTTModel, setSelectedSTTModel,
-        downloadStates, handleDownload, handleDeleteModel,
+        downloadStates, downloadProgress,
+        handleDownload, handleDeleteModel,
         connectedProviders, setConnectedProviders,
+        connectProvider, disconnectProvider,
         useLocalModels, setUseLocalModels,
         getActiveAIModelLabel, getAvailableAIModels,
       }}

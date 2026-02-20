@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 export interface Folder {
   id: string;
@@ -12,15 +13,13 @@ interface FolderContextType {
   createFolder: (name: string) => Folder;
   deleteFolder: (id: string) => void;
   renameFolder: (id: string, name: string) => void;
-  noteFolders: Record<string, string>; // meetingId -> folderId
+  noteFolders: Record<string, string>;
   addNoteToFolder: (noteId: string, folderId: string) => void;
   removeNoteFromFolder: (noteId: string) => void;
   getNotesInFolder: (folderId: string) => string[];
 }
 
 const LS_KEY = "syag-folders";
-
-const defaultFolders: Folder[] = [];
 
 const colors = [
   "bg-accent/20 text-accent",
@@ -31,25 +30,34 @@ const colors = [
   "bg-emerald-100 text-emerald-700",
 ];
 
-function loadFolders(): { folders: Folder[]; noteFolders: Record<string, string> } {
+function loadFoldersFromLS(): { folders: Folder[]; noteFolders: Record<string, string> } {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
-  return { folders: defaultFolders, noteFolders: {} };
+  return { folders: [], noteFolders: {} };
 }
 
 const FolderContext = createContext<FolderContextType | null>(null);
 
 export function FolderProvider({ children }: { children: ReactNode }) {
-  const stored = loadFolders();
+  const api = getElectronAPI();
+  const stored = isElectron ? { folders: [], noteFolders: {} } : loadFoldersFromLS();
   const [folders, setFolders] = useState<Folder[]>(stored.folders);
   const [noteFolders, setNoteFolders] = useState<Record<string, string>>(stored.noteFolders);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ folders, noteFolders }));
-    } catch {}
+    if (api) {
+      api.db.folders.getAll().then((dbFolders) => setFolders(dbFolders));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!api) {
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({ folders, noteFolders }));
+      } catch {}
+    }
   }, [folders, noteFolders]);
 
   const createFolder = (name: string): Folder => {
@@ -60,6 +68,9 @@ export function FolderProvider({ children }: { children: ReactNode }) {
       icon: "folder",
     };
     setFolders((prev) => [...prev, folder]);
+    if (api) {
+      api.db.folders.add(folder).catch(console.error);
+    }
     return folder;
   };
 
@@ -70,11 +81,17 @@ export function FolderProvider({ children }: { children: ReactNode }) {
       Object.keys(next).forEach((k) => { if (next[k] === id) delete next[k]; });
       return next;
     });
+    if (api) {
+      api.db.folders.delete(id).catch(console.error);
+    }
   };
 
-  const renameFolder = (id: string, name: string) => {
+  const renameFolder = useCallback((id: string, name: string) => {
     setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name } : f)));
-  };
+    if (api) {
+      api.db.folders.update(id, { name }).catch(console.error);
+    }
+  }, [api]);
 
   const addNoteToFolder = (noteId: string, folderId: string) => {
     setNoteFolders((prev) => ({ ...prev, [noteId]: folderId }));

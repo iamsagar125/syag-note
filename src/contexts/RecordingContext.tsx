@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 interface RecordingSession {
   noteId: string;
@@ -7,20 +8,74 @@ interface RecordingSession {
   isRecording: boolean;
 }
 
+type TranscriptLine = { speaker: string; time: string; text: string };
+
 interface RecordingContextType {
   activeSession: RecordingSession | null;
   startSession: (noteId: string) => void;
   updateSession: (updates: Partial<RecordingSession>) => void;
   clearSession: () => void;
+  transcriptLines: TranscriptLine[];
+  isCapturing: boolean;
+  usingWebSpeech: boolean;
+  startAudioCapture: (sttModel: string) => Promise<void>;
+  stopAudioCapture: () => Promise<void>;
+  pauseAudioCapture: () => Promise<void>;
+  resumeAudioCapture: (sttModel?: string) => Promise<void>;
 }
 
 const RecordingContext = createContext<RecordingContextType | undefined>(undefined);
 
 export function RecordingProvider({ children }: { children: ReactNode }) {
   const [activeSession, setActiveSession] = useState<RecordingSession | null>(null);
+  const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [usingWebSpeech, setUsingWebSpeech] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const systemStreamRef = useRef<MediaStream | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const speechRecRef = useRef<any>(null);
+  const elapsedRef = useRef(0);
+
+  const api = getElectronAPI();
+
+  useEffect(() => {
+    if (!api) return;
+
+    const cleanupTranscript = api.recording.onTranscriptChunk((chunk) => {
+      setTranscriptLines((prev) => [...prev, chunk]);
+    });
+
+    const cleanupStatus = api.recording.onRecordingStatus((status) => {
+      if (status.state === 'auto-paused') {
+        setActiveSession(prev => prev ? { ...prev, isRecording: false } : null);
+      } else if (status.state === 'auto-resumed') {
+        setActiveSession(prev => prev ? { ...prev, isRecording: true } : null);
+      }
+    });
+
+    cleanupRef.current = cleanupTranscript;
+
+    return () => { cleanupTranscript(); cleanupStatus(); };
+  }, []);
+
+  // Global elapsed timer -- ticks regardless of which page is mounted
+  useEffect(() => {
+    if (!activeSession?.isRecording) return;
+    const id = setInterval(() => {
+      setActiveSession((prev) => prev && prev.isRecording
+        ? { ...prev, elapsedSeconds: prev.elapsedSeconds + 1 }
+        : prev
+      );
+    }, 1000);
+    return () => clearInterval(id);
+  }, [activeSession?.isRecording]);
 
   const startSession = useCallback((noteId: string) => {
     setActiveSession({ noteId, title: "New note", elapsedSeconds: 0, isRecording: true });
+    setTranscriptLines([]);
   }, []);
 
   const updateSession = useCallback((updates: Partial<RecordingSession>) => {
@@ -31,8 +86,231 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     setActiveSession(null);
   }, []);
 
+  // Keep elapsed ref in sync for Web Speech API callback
+  useEffect(() => {
+    elapsedRef.current = activeSession?.elapsedSeconds ?? 0;
+  }, [activeSession?.elapsedSeconds]);
+
+  const stopSpeechRecognition = useCallback(() => {
+    if (speechRecRef.current) {
+      try { speechRecRef.current.abort(); } catch {}
+      speechRecRef.current = null;
+    }
+    setUsingWebSpeech(false);
+  }, []);
+
+  const startSpeechRecognition = useCallback(() => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      console.warn('Web Speech API not available in this environment');
+      return;
+    }
+
+    stopSpeechRecognition();
+
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const text = event.results[i][0].transcript;
+          if (text && text.trim()) {
+            const seconds = elapsedRef.current;
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            setTranscriptLines(prev => [...prev, {
+              speaker: 'You',
+              time: `${m}:${String(s).padStart(2, '0')}`,
+              text: text.trim()
+            }]);
+          }
+        }
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.warn('Speech recognition error:', event.error);
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        speechRecRef.current = null;
+        setUsingWebSpeech(false);
+      }
+    };
+
+    recognition.onend = () => {
+      if (speechRecRef.current === recognition) {
+        try { recognition.start(); } catch {}
+      }
+    };
+
+    try {
+      recognition.start();
+      speechRecRef.current = recognition;
+      setUsingWebSpeech(true);
+    } catch (err) {
+      console.warn('Failed to start speech recognition:', err);
+    }
+  }, [stopSpeechRecognition]);
+
+  const startAudioCapture = useCallback(async (sttModel: string) => {
+    if (!api) return;
+
+    // Read the user-selected audio device from DB
+    let preferredDeviceId: string | undefined;
+    try {
+      const storedDevice = await api.db.settings.get('audio-input-device');
+      if (storedDevice) preferredDeviceId = storedDevice;
+    } catch {}
+
+    try {
+      await api.recording.start({ sttModel: sttModel || '' });
+
+      const audioCtx = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioCtx;
+
+      const workletUrl = isElectron
+        ? new URL('./audio-processor.js', window.location.href).href
+        : '/audio-processor.js';
+      await audioCtx.audioWorklet.addModule(workletUrl);
+
+      const merger = audioCtx.createChannelMerger(2);
+      const worklet = new AudioWorkletNode(audioCtx, 'syag-audio-processor');
+      workletNodeRef.current = worklet;
+
+      worklet.port.onmessage = (event) => {
+        if (event.data.type === 'audio-chunk') {
+          api.recording.sendAudioChunk(event.data.pcm);
+        }
+      };
+
+      // 1. Capture microphone audio (use user-selected device if set)
+      try {
+        const audioConstraints: MediaTrackConstraints = {
+          sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true,
+        };
+        if (preferredDeviceId) {
+          audioConstraints.deviceId = { exact: preferredDeviceId };
+        }
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+        micStreamRef.current = micStream;
+        const micSource = audioCtx.createMediaStreamSource(micStream);
+        micSource.connect(merger, 0, 0);
+      } catch (micErr) {
+        console.warn('Microphone access denied or unavailable:', micErr);
+      }
+
+      // 2. Capture system audio via desktopCapturer
+      try {
+        const sources = await api.audio.getDesktopSources();
+        if (sources.length > 0) {
+          const systemStream = await (navigator.mediaDevices as any).getUserMedia({
+            audio: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+              }
+            },
+            video: {
+              mandatory: {
+                chromeMediaSource: 'desktop',
+                minWidth: 1,
+                maxWidth: 1,
+                minHeight: 1,
+                maxHeight: 1,
+              }
+            }
+          });
+          // Remove the video track, we only need audio
+          systemStream.getVideoTracks().forEach((t: MediaStreamTrack) => t.stop());
+
+          systemStreamRef.current = systemStream;
+          const systemSource = audioCtx.createMediaStreamSource(systemStream);
+          systemSource.connect(merger, 0, 1);
+        }
+      } catch (sysErr) {
+        console.warn('System audio capture not available (screen recording permission may be needed):', sysErr);
+      }
+
+      merger.connect(worklet);
+      worklet.connect(audioCtx.destination);
+      setIsCapturing(true);
+
+      // When no STT model is configured, use Web Speech API as zero-config fallback
+      if (!sttModel) {
+        startSpeechRecognition();
+      }
+    } catch (err) {
+      console.error('Failed to start audio capture:', err);
+      setIsCapturing(false);
+      // Even if full audio capture failed, try Web Speech API for basic transcription
+      if (!sttModel) {
+        startSpeechRecognition();
+      }
+      throw err;
+    }
+  }, [api, startSpeechRecognition]);
+
+  const pauseAudioCapture = useCallback(async () => {
+    if (api) {
+      await api.recording.pause();
+    }
+    if (speechRecRef.current) {
+      try { speechRecRef.current.abort(); } catch {}
+      speechRecRef.current = null;
+      setUsingWebSpeech(false);
+    }
+    setActiveSession(prev => prev ? { ...prev, isRecording: false } : null);
+  }, [api]);
+
+  const resumeAudioCapture = useCallback(async (sttModel?: string) => {
+    if (api) {
+      await api.recording.resume();
+    }
+    setActiveSession(prev => prev ? { ...prev, isRecording: true } : null);
+    // Restart Web Speech API fallback if no STT model
+    if (!sttModel && !speechRecRef.current) {
+      startSpeechRecognition();
+    }
+  }, [api, startSpeechRecognition]);
+
+  const stopAudioCapture = useCallback(async () => {
+    setIsCapturing(false);
+    stopSpeechRecognition();
+
+    if (workletNodeRef.current) {
+      workletNodeRef.current.port.postMessage({ type: 'stop' });
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      await audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach(t => t.stop());
+      micStreamRef.current = null;
+    }
+
+    if (systemStreamRef.current) {
+      systemStreamRef.current.getTracks().forEach(t => t.stop());
+      systemStreamRef.current = null;
+    }
+
+    if (api) {
+      await api.recording.stop();
+    }
+  }, [api, stopSpeechRecognition]);
+
   return (
-    <RecordingContext.Provider value={{ activeSession, startSession, updateSession, clearSession }}>
+    <RecordingContext.Provider value={{
+      activeSession, startSession, updateSession, clearSession,
+      transcriptLines, isCapturing, usingWebSpeech,
+      startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture
+    }}>
       {children}
     </RecordingContext.Provider>
   );

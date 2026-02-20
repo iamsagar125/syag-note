@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Mic, Sparkles, FileText, ArrowRight, Check, ShieldCheck, AlertCircle } from "lucide-react";
+import { Mic, Sparkles, FileText, ArrowRight, Check, ShieldCheck, AlertCircle, Monitor } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 const ONBOARDING_KEY = "syag-onboarding-complete";
 
@@ -31,16 +32,18 @@ const featureSteps = [
   },
 ];
 
-// Total steps: 3 features + 1 mic permission + 1 name = 5
-const TOTAL_DOTS = 5;
+const TOTAL_DOTS = isElectron ? 6 : 5;
 const MIC_STEP = 3;
-const NAME_STEP = 4;
+const SCREEN_STEP = isElectron ? 4 : -1;
+const NAME_STEP = isElectron ? 5 : 4;
 
 export default function OnboardingPage() {
   const navigate = useNavigate();
+  const api = getElectronAPI();
   const [currentStep, setCurrentStep] = useState(0);
   const [name, setName] = useState("");
   const [micStatus, setMicStatus] = useState<"idle" | "granted" | "denied">("idle");
+  const [screenStatus, setScreenStatus] = useState<"idle" | "granted" | "denied">("idle");
 
   const handleNext = () => {
     setCurrentStep((s) => s + 1);
@@ -48,14 +51,40 @@ export default function OnboardingPage() {
 
   const requestMic = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Stop tracks immediately — we just needed the permission
-      stream.getTracks().forEach((t) => t.stop());
-      setMicStatus("granted");
-      // Auto-advance after a short delay
-      setTimeout(() => setCurrentStep((s) => s + 1), 600);
+      if (api) {
+        const result = await api.permissions.requestMicrophone();
+        setMicStatus(result ? "granted" : "denied");
+        if (result) {
+          setTimeout(() => setCurrentStep((s) => s + 1), 600);
+        }
+      } else {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+        setMicStatus("granted");
+        setTimeout(() => setCurrentStep((s) => s + 1), 600);
+      }
     } catch {
       setMicStatus("denied");
+    }
+  };
+
+  const requestScreen = async () => {
+    if (api) {
+      const status = await api.permissions.checkScreenRecording();
+      if (status === "granted") {
+        setScreenStatus("granted");
+        setTimeout(() => setCurrentStep((s) => s + 1), 600);
+      } else {
+        await api.permissions.requestScreenRecording();
+        const newStatus = await api.permissions.checkScreenRecording();
+        setScreenStatus(newStatus === "granted" ? "granted" : "denied");
+        if (newStatus === "granted") {
+          setTimeout(() => setCurrentStep((s) => s + 1), 600);
+        }
+      }
+    } else {
+      setScreenStatus("granted");
+      setTimeout(() => setCurrentStep((s) => s + 1), 600);
     }
   };
 
@@ -74,6 +103,7 @@ export default function OnboardingPage() {
 
   const isFeatureStep = currentStep < featureSteps.length;
   const isMicStep = currentStep === MIC_STEP;
+  const isScreenStep = currentStep === SCREEN_STEP;
   const isNameStep = currentStep === NAME_STEP;
   const isLastFeatureStep = currentStep === featureSteps.length - 1;
 
@@ -142,7 +172,7 @@ export default function OnboardingPage() {
               {micStatus === "granted"
                 ? "You're all set to record meetings."
                 : micStatus === "denied"
-                ? "Syag needs microphone access to record meetings. You can enable it in your browser settings."
+                ? "Syag needs microphone access to record meetings. You can enable it in System Settings > Privacy & Security."
                 : "Syag needs access to your microphone to capture meeting audio. We never record without your explicit action."}
             </p>
             {micStatus === "idle" && (
@@ -161,6 +191,62 @@ export default function OnboardingPage() {
                   className="inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-2.5 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
                 >
                   Try again
+                </button>
+                <button
+                  onClick={handleNext}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Skip for now
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {isScreenStep && (
+          <div className="text-center animate-fade-in" key="screen">
+            <div className={cn(
+              "flex h-16 w-16 items-center justify-center rounded-2xl mx-auto mb-6",
+              screenStatus === "granted" ? "bg-accent/10 text-accent" :
+              screenStatus === "denied" ? "bg-destructive/10 text-destructive" :
+              "bg-accent/10 text-accent"
+            )}>
+              {screenStatus === "granted" ? (
+                <ShieldCheck className="h-7 w-7" />
+              ) : screenStatus === "denied" ? (
+                <AlertCircle className="h-7 w-7" />
+              ) : (
+                <Monitor className="h-7 w-7" />
+              )}
+            </div>
+            <h1 className="font-display text-2xl text-foreground mb-2">
+              {screenStatus === "granted" ? "Screen recording enabled!" :
+               screenStatus === "denied" ? "Screen recording access needed" :
+               "Enable screen audio capture"}
+            </h1>
+            <p className="text-[15px] text-muted-foreground leading-relaxed max-w-sm mx-auto mb-8">
+              {screenStatus === "granted"
+                ? "Syag can now capture system audio from your meetings."
+                : screenStatus === "denied"
+                ? "To capture audio from meeting apps, enable Screen Recording in System Settings > Privacy & Security > Screen Recording."
+                : "This allows Syag to capture audio from meeting apps like Zoom, Google Meet, and Teams. Only audio is captured, never your screen."}
+            </p>
+            {screenStatus === "idle" && (
+              <button
+                onClick={requestScreen}
+                className="inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-2.5 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
+              >
+                <Monitor className="h-4 w-4" />
+                Allow screen audio
+              </button>
+            )}
+            {screenStatus === "denied" && (
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={requestScreen}
+                  className="inline-flex items-center gap-2 rounded-lg bg-accent px-6 py-2.5 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
+                >
+                  Check again
                 </button>
                 <button
                   onClick={handleNext}

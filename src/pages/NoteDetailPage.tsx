@@ -8,6 +8,7 @@ import { useNotes } from "@/contexts/NotesContext";
 import { useRecording } from "@/contexts/RecordingContext";
 import { PanelLeftClose, PanelLeft, Share2, MoreHorizontal, FileText, Hash, Calendar, Clock, Users, EyeOff, Eye, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isElectron } from "@/lib/electron-api";
 
 export default function NoteDetailPage() {
   const { id } = useParams();
@@ -124,7 +125,10 @@ export default function NoteDetailPage() {
         <Sidebar />
       </div>
       <main className="flex flex-1 flex-col min-w-0">
-        <div className="flex items-center justify-between px-4 pt-3 pb-0">
+        <div className={cn(
+          "flex items-center justify-between px-4 pt-3 pb-0",
+          !sidebarOpen && isElectron && "pl-20"
+        )}>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -216,7 +220,7 @@ export default function NoteDetailPage() {
                 transcriptVisible={transcriptVisible}
                 onToggleTranscript={() => setTranscriptVisible(!transcriptVisible)}
                 onResumeRecording={handleResume}
-                onStopRecording={handleStop}
+                onGenerateNotes={handleStop}
               />
             </div>
           </div>

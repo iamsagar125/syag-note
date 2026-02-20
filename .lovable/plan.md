@@ -2,7 +2,7 @@
 
 ## Live Meeting Indicator -- Floating Widget
 
-Create a new standalone floating indicator component that mimics Granola's always-visible recording widget. In a web context, this will be a fixed-position widget pinned to the right edge of the viewport, visible across all pages when a recording session is active. (True cross-app visibility requires Electron -- this lays the groundwork for that.)
+Create a new standalone floating indicator component that mimics an always-visible recording widget. In a web context, this will be a fixed-position widget pinned to the right edge of the viewport, visible across all pages when a recording session is active. (True cross-app visibility requires Electron -- this lays the groundwork for that.)
 
 ### New File: `src/components/LiveMeetingIndicator.tsx`
 

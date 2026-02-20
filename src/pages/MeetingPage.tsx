@@ -7,6 +7,7 @@ import { NotesViewToggle } from "@/components/NotesViewToggle";
 import { meetings } from "@/data/meetings";
 import { PanelLeftClose, PanelLeft, Share2, MoreHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isElectron } from "@/lib/electron-api";
 
 export default function MeetingPage() {
   const { id } = useParams();
@@ -32,7 +33,10 @@ export default function MeetingPage() {
         <Sidebar />
       </div>
       <main className="flex flex-1 flex-col min-w-0">
-        <div className="flex items-center justify-between px-4 pt-3 pb-0">
+        <div className={cn(
+          "flex items-center justify-between px-4 pt-3 pb-0",
+          !sidebarOpen && isElectron && "pl-20"
+        )}>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}

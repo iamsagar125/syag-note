@@ -14,6 +14,19 @@ import { cn } from "@/lib/utils";
 import { useFolders } from "@/contexts/FolderContext";
 import { useNotes } from "@/contexts/NotesContext";
 import { useRecording } from "@/contexts/RecordingContext";
+import { useModelSettings } from "@/contexts/ModelSettingsContext";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
+import type { SummaryData } from "@/components/EditableSummary";
+
+const MEETING_TEMPLATES = [
+  { id: "general", name: "General", icon: "📋" },
+  { id: "standup", name: "Standup", icon: "🏃" },
+  { id: "one-on-one", name: "1:1", icon: "🤝" },
+  { id: "brainstorm", name: "Brainstorm", icon: "💡" },
+  { id: "customer-call", name: "Customer Call", icon: "📞" },
+  { id: "interview", name: "Interview", icon: "🎯" },
+  { id: "retrospective", name: "Retro", icon: "🔄" },
+];
 
 type RecordingState = "recording" | "paused" | "stopped";
 
@@ -28,23 +41,58 @@ const fakeTranscriptLines = [
   { speaker: "You", time: "0:45", text: "And we should schedule the demo recording for next Tuesday." },
 ];
 
-const generateSummary = (notes: string, transcript: typeof fakeTranscriptLines) => {
-  const transcriptText = transcript.map(l => l.text).join(" ");
-  const combined = [notes, transcriptText].filter(Boolean).join(" ");
-  
-  // Simulate AI summarization based on content
-  const sentences = combined.split(/[.!?]+/).filter(s => s.trim().length > 10);
-  const keyPoints = sentences.slice(0, Math.min(4, sentences.length)).map(s => s.trim());
-  
+const generateLocalSummary = (notes: string, transcript: { speaker: string; time: string; text: string }[]) => {
+  const transcriptText = transcript.map(l => `[${l.time}] ${l.speaker}: ${l.text}`).join("\n");
+  const notesSentences = notes
+    .split(/[.!?\n]+/)
+    .map(s => s.trim())
+    .filter(s => s.length > 5);
+  const transcriptSentences = transcript.map(l => l.text.trim()).filter(s => s.length > 5);
+  const allSentences = [...notesSentences, ...transcriptSentences];
+
+  if (allSentences.length === 0) {
+    return {
+      overview: "No content was captured during this session. Try speaking closer to the microphone or selecting an STT model in Settings.",
+      keyPoints: ["No transcript or notes were recorded"],
+      nextSteps: [
+        { text: "Configure an STT model in Settings for live transcription", assignee: "You", done: false },
+      ],
+    };
+  }
+
+  const overviewParts: string[] = [];
+  if (notesSentences.length > 0) {
+    overviewParts.push(`Personal notes: ${notesSentences.slice(0, 2).join(". ")}.`);
+  }
+  if (transcriptSentences.length > 0) {
+    const duration = transcript.length > 0 ? transcript[transcript.length - 1].time : "0:00";
+    const speakers = [...new Set(transcript.map(l => l.speaker))];
+    overviewParts.push(
+      `Transcript captured ${transcriptSentences.length} segment${transcriptSentences.length !== 1 ? "s" : ""} over ${duration} from ${speakers.join(", ")}.`
+    );
+    if (transcriptSentences.length >= 2) {
+      overviewParts.push(`Topics discussed: ${transcriptSentences.slice(0, 3).join("; ")}.`);
+    }
+  }
+
+  const keyPoints = allSentences
+    .filter(s => s.length > 15)
+    .slice(0, 6);
+
+  const actionKeywords = /\b(need to|should|must|will|todo|action|follow up|schedule|finalize|review|complete|send|prepare|create|update|fix|check)\b/i;
+  const actionItems = allSentences
+    .filter(s => actionKeywords.test(s))
+    .slice(0, 4)
+    .map(s => ({ text: s, assignee: "You", done: false }));
+
+  if (actionItems.length === 0) {
+    actionItems.push({ text: "Review notes from this session", assignee: "You", done: false });
+  }
+
   return {
-    overview: combined.length > 100 
-      ? `This session covered: ${combined.substring(0, 150).trim()}...`
-      : "A brief session covering key discussion points.",
-    keyPoints: keyPoints.length > 0 ? keyPoints : ["No key points identified yet"],
-    nextSteps: [
-      { text: "Review and finalize discussed items", assignee: "You", done: false },
-      { text: "Follow up on action items", assignee: "You", done: false },
-    ],
+    overview: overviewParts.join(" ") || "A session was recorded.",
+    keyPoints: keyPoints.length > 0 ? keyPoints : ["Session captured but no distinct points identified"],
+    nextSteps: actionItems,
   };
 };
 
@@ -58,16 +106,22 @@ export default function NewNotePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const eventState = location.state as { eventTitle?: string; eventId?: string } | null;
-  const { activeSession, startSession, updateSession, clearSession } = useRecording();
-  
-  // Check if returning to an existing session
-  const searchParams = new URLSearchParams(window.location.search);
+  const { activeSession, startSession, updateSession, clearSession, transcriptLines, isCapturing, usingWebSpeech, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture } = useRecording();
+  const { selectedSTTModel, selectedAIModel } = useModelSettings();
+  const api = getElectronAPI();
+
+  const searchParams = new URLSearchParams(location.search);
   const existingSessionId = searchParams.get("session");
   const isReturning = !!(existingSessionId && activeSession && activeSession.noteId === existingSessionId);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [recordingState, setRecordingState] = useState<RecordingState>("recording");
-  const [transcriptVisible, setTranscriptVisible] = useState(false);
+  const [recordingState, setRecordingState] = useState<RecordingState>(() => {
+    if (isReturning && activeSession) {
+      return activeSession.isRecording ? "recording" : "paused";
+    }
+    return "recording";
+  });
+  const [transcriptVisible, setTranscriptVisible] = useState(isElectron);
   const [personalNotes, setPersonalNotes] = useState("");
   const [visibleLines, setVisibleLines] = useState(2);
   const [title, setTitle] = useState(() => eventState?.eventTitle || "");
@@ -76,103 +130,200 @@ export default function NewNotePage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
-  const [elapsedSeconds, setElapsedSeconds] = useState(() => isReturning && activeSession ? activeSession.elapsedSeconds : 0);
   const [viewMode, setViewMode] = useState<"my-notes" | "ai-notes">("ai-notes");
-  const [summary, setSummary] = useState<ReturnType<typeof generateSummary> | null>(null);
+  const [summary, setSummary] = useState<SummaryData | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [transcriptSearch, setTranscriptSearch] = useState("");
+  const [meetingTemplate, setMeetingTemplate] = useState("general");
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showRealTimeTranscript, setShowRealTimeTranscript] = useState(true);
+  const [autoGenerateNotes, setAutoGenerateNotes] = useState(true);
   const [noteId] = useState(() => isReturning ? existingSessionId! : crypto.randomUUID());
   const titleRef = useRef<HTMLInputElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const transcriptRef = useRef(transcriptLines);
   const { folders, createFolder } = useFolders();
   const { addNote, deleteNote } = useNotes();
 
+  // Load settings from DB on mount
+  useEffect(() => {
+    if (!api) return;
+    api.db.settings.get('real-time-transcription').then(val => {
+      if (val !== null) setShowRealTimeTranscript(JSON.parse(val));
+    }).catch(() => {});
+    api.db.settings.get('auto-generate-notes').then(val => {
+      if (val !== null) setAutoGenerateNotes(JSON.parse(val));
+    }).catch(() => {});
+  }, []);
+
+  const usingRealAudio = isElectron;
+  const elapsedSeconds = activeSession?.elapsedSeconds ?? 0;
+  const currentTranscript = usingRealAudio ? transcriptLines : fakeTranscriptLines.slice(0, visibleLines);
+
+  // Keep transcript ref in sync so generateNotes always gets the latest
+  useEffect(() => { transcriptRef.current = transcriptLines; }, [transcriptLines]);
+
   const selectedFolder = folders.find((f) => f.id === selectedFolderId);
 
-  // Start recording session on mount (only if not returning to existing)
   useEffect(() => {
     if (!isReturning) {
+      // Stop any previous recording before starting a new one
+      if (activeSession?.isRecording && usingRealAudio) {
+        stopAudioCapture().catch(console.error);
+      }
       startSession(noteId);
+      if (usingRealAudio) {
+        startAudioCapture(selectedSTTModel || '').catch((err) => {
+          console.error('Audio capture failed:', err);
+        });
+      }
     } else if (activeSession) {
       setTitle(activeSession.title === "New note" ? "" : activeSession.title);
+      if (activeSession.isRecording) {
+        setRecordingState("recording");
+      }
     }
     return () => {};
   }, []);
 
-  // Real-time timer + sync to recording context
+  // Keep the session title synced with local title state
   useEffect(() => {
     if (recordingState !== "recording") return;
-    const timer = setInterval(() => {
-      setElapsedSeconds((prev) => {
-        const next = prev + 1;
-        updateSession({ elapsedSeconds: next, isRecording: true, title: title || "New note" });
-        return next;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
+    updateSession({ isRecording: true, title: title || "New note" });
   }, [recordingState, title, updateSession]);
 
-  // Simulate live transcription
+  // Sync recording state with auto-pause/resume from main process
+  // Auto-pause from silence detection auto-generates notes
   useEffect(() => {
+    if (recordingState === "stopped") return;
+    if (activeSession && !activeSession.isRecording && recordingState === "recording") {
+      setRecordingState("paused");
+      // Auto-paused by main process (silence detection) -- auto-generate notes if enabled
+      if (autoGenerateNotes && !isSummarizing && transcriptRef.current.length > 0) {
+        generateNotes();
+      }
+    } else if (activeSession && activeSession.isRecording && recordingState === "paused") {
+      setRecordingState("recording");
+    }
+  }, [activeSession?.isRecording]);
+
+  // Simulate live transcription for web mode only
+  useEffect(() => {
+    if (usingRealAudio) return;
     if (recordingState !== "recording") return;
     if (visibleLines >= fakeTranscriptLines.length) return;
     const timer = setInterval(() => {
       setVisibleLines((prev) => Math.min(prev + 1, fakeTranscriptLines.length));
     }, 3000);
     return () => clearInterval(timer);
-  }, [recordingState, visibleLines]);
+  }, [recordingState, visibleLines, usingRealAudio]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [visibleLines]);
+  }, [visibleLines, transcriptLines.length]);
 
   useEffect(() => {
     if (isEditingTitle) titleRef.current?.select();
   }, [isEditingTitle]);
 
-  const handleStop = useCallback(() => {
-    setRecordingState("stopped");
-    clearSession();
+  const generateNotes = useCallback(async () => {
+    if (isSummarizing) return;
+    setIsSummarizing(true);
     setTranscriptVisible(true);
     const noteTitle = title || "Meeting notes";
     if (!title) setTitle(noteTitle);
-    setIsSummarizing(true);
+
+    const finalTranscript = usingRealAudio ? transcriptRef.current : fakeTranscriptLines;
+
+    let generatedSummary: SummaryData;
+    if (api && selectedAIModel) {
+      try {
+        generatedSummary = await api.llm.summarize({
+          transcript: finalTranscript,
+          personalNotes,
+          model: selectedAIModel,
+          meetingTemplateId: meetingTemplate,
+        });
+      } catch (err) {
+        console.error('LLM summarization failed, using local fallback:', err);
+        generatedSummary = generateLocalSummary(personalNotes, finalTranscript);
+      }
+    } else {
+      await new Promise(r => setTimeout(r, 1500));
+      generatedSummary = generateLocalSummary(personalNotes, finalTranscript);
+    }
+
+    setSummary(generatedSummary);
+    setIsSummarizing(false);
+
     const now = new Date();
     const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
     const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-    // Simulate AI processing delay
-    setTimeout(() => {
-      const generatedSummary = generateSummary(personalNotes, fakeTranscriptLines);
-      setSummary(generatedSummary);
-      setIsSummarizing(false);
-      // Save note
-      addNote({
-        id: noteId,
-        title: noteTitle,
-        date: dateStr,
-        time: timeStr,
-        duration: formatTime(elapsedSeconds),
-        personalNotes,
-        transcript: fakeTranscriptLines,
-        summary: generatedSummary,
-        folderId: selectedFolderId,
-      });
-    }, 1500);
-  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, clearSession]);
 
-  const handleViewModeChange = useCallback((mode: "my-notes" | "ai-notes") => {
+    addNote({
+      id: noteId,
+      title: generatedSummary.title || noteTitle,
+      date: dateStr,
+      time: timeStr,
+      duration: formatTime(elapsedSeconds),
+      personalNotes,
+      transcript: finalTranscript,
+      summary: generatedSummary,
+      folderId: selectedFolderId,
+    });
+    if (generatedSummary.title && generatedSummary.title !== noteTitle) {
+      setTitle(generatedSummary.title);
+    }
+  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, meetingTemplate, isSummarizing]);
+
+  const handleEndMeeting = useCallback(async () => {
+    setRecordingState("stopped");
+
+    if (usingRealAudio) {
+      await stopAudioCapture();
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    await generateNotes();
+    clearSession();
+  }, [usingRealAudio, stopAudioCapture, generateNotes, clearSession]);
+
+  const handleResume = useCallback(() => {
+    setRecordingState("recording");
+    setSummary(null);
+    setTranscriptVisible(true);
+    if (usingRealAudio) {
+      resumeAudioCapture(selectedSTTModel || '').catch(console.error);
+    }
+  }, [usingRealAudio, resumeAudioCapture, selectedSTTModel]);
+
+  const handleViewModeChange = useCallback(async (mode: "my-notes" | "ai-notes") => {
     if (mode === "ai-notes" && viewMode === "my-notes") {
-      // Re-summarize when switching back to AI notes
       setIsSummarizing(true);
-      setTimeout(() => {
-        setSummary(generateSummary(personalNotes, fakeTranscriptLines));
-        setIsSummarizing(false);
-      }, 1200);
+      const finalTranscript = usingRealAudio ? transcriptLines : fakeTranscriptLines;
+
+      if (api && selectedAIModel) {
+        try {
+          const newSummary = await api.llm.summarize({
+            transcript: finalTranscript,
+            personalNotes,
+            model: selectedAIModel,
+            meetingTemplateId: meetingTemplate,
+          });
+          setSummary(newSummary);
+        } catch {
+          setSummary(generateLocalSummary(personalNotes, finalTranscript));
+        }
+      } else {
+        await new Promise(r => setTimeout(r, 1200));
+        setSummary(generateLocalSummary(personalNotes, finalTranscript));
+      }
+      setIsSummarizing(false);
     }
     setViewMode(mode);
-  }, [viewMode, personalNotes]);
+  }, [viewMode, personalNotes, api, selectedAIModel, usingRealAudio, transcriptLines, meetingTemplate]);
 
   const handleCreateAndAssign = () => {
     if (newFolderName.trim()) {
@@ -184,7 +335,6 @@ export default function NewNotePage() {
     }
   };
 
-  // Close more menu on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
@@ -220,6 +370,7 @@ export default function NewNotePage() {
 
   const elapsed = formatTime(elapsedSeconds);
   const isStopped = recordingState === "stopped";
+  const showSummaryPanel = (recordingState === "paused" || recordingState === "stopped") && (summary || isSummarizing);
 
   const folderChip = (
     <>
@@ -302,8 +453,11 @@ export default function NewNotePage() {
       </div>
 
       <main className="flex flex-1 flex-col min-w-0">
-        {/* Top bar */}
-        <div className="flex items-center justify-between px-4 pt-3 pb-0">
+        {/* Top bar — pl-20 clears macOS traffic lights when sidebar is collapsed */}
+        <div className={cn(
+          "flex items-center justify-between px-4 pt-3 pb-0",
+          !sidebarOpen && isElectron && "pl-20"
+        )}>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -318,8 +472,7 @@ export default function NewNotePage() {
               ← Back to notes
             </button>
           </div>
-          {/* Show toggle + share/more only after summary */}
-          {isStopped && (
+          {showSummaryPanel && (
             <div className="flex items-center gap-1.5">
               <NotesViewToggle viewMode={viewMode} onViewModeChange={handleViewModeChange} />
               <button className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
@@ -358,7 +511,6 @@ export default function NewNotePage() {
 
         {/* Content area */}
         <div className="flex flex-1 overflow-hidden">
-          {/* Left: main content + ask bar */}
           <div className="flex flex-1 flex-col min-w-0">
             <div className="flex-1 overflow-y-auto pb-24">
               <div className="mx-auto max-w-3xl px-8 py-3">
@@ -391,7 +543,7 @@ export default function NewNotePage() {
                     <Calendar className="h-3 w-3" />
                     Today
                   </span>
-                  {isStopped && (
+                  {showSummaryPanel && (
                     <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
                       <Clock className="h-3 w-3" />
                       {elapsed}
@@ -401,11 +553,44 @@ export default function NewNotePage() {
                     <Users className="h-3 w-3" />
                     Me
                   </span>
+                  {/* Meeting template selector */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowTemplateMenu(!showTemplateMenu)}
+                      className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground hover:bg-secondary transition-colors"
+                    >
+                      <span>{MEETING_TEMPLATES.find(t => t.id === meetingTemplate)?.icon}</span>
+                      {MEETING_TEMPLATES.find(t => t.id === meetingTemplate)?.name}
+                    </button>
+                    {showTemplateMenu && (
+                      <div className="absolute top-full left-0 mt-1 w-44 rounded-lg border border-border bg-popover shadow-lg z-50 overflow-hidden">
+                        <div className="px-3 py-2 border-b border-border">
+                          <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Meeting type</span>
+                        </div>
+                        <div className="py-1">
+                          {MEETING_TEMPLATES.map((t) => (
+                            <button
+                              key={t.id}
+                              onClick={() => { setMeetingTemplate(t.id); setShowTemplateMenu(false); }}
+                              className={cn(
+                                "flex w-full items-center gap-2.5 px-3 py-1.5 text-xs transition-colors",
+                                meetingTemplate === t.id ? "bg-secondary text-foreground" : "text-foreground hover:bg-secondary"
+                              )}
+                            >
+                              <span>{t.icon}</span>
+                              {t.name}
+                              {meetingTemplate === t.id && <Check className="h-3 w-3 ml-auto text-accent" />}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   {folderChip}
                 </div>
 
-                {/* Content: recording vs stopped */}
-                {!isStopped ? (
+                {/* Content: recording vs paused/stopped with notes */}
+                {!showSummaryPanel ? (
                   <textarea
                     value={personalNotes}
                     onChange={(e) => setPersonalNotes(e.target.value)}
@@ -425,7 +610,6 @@ export default function NewNotePage() {
                       />
                     ) : isSummarizing ? (
                       <div className="space-y-8 py-4">
-                        {/* Shimmer: Overview */}
                         <div>
                           <div className="flex items-center gap-2 mb-3">
                             <div className="h-3.5 w-3.5 rounded bg-muted-foreground/10 animate-pulse" />
@@ -437,7 +621,6 @@ export default function NewNotePage() {
                             <div className="h-4 w-3/5 rounded bg-muted-foreground/10 animate-pulse" />
                           </div>
                         </div>
-                        {/* Shimmer: Key Points */}
                         <div>
                           <div className="flex items-center gap-2 mb-3">
                             <div className="h-3.5 w-3.5 rounded bg-muted-foreground/10 animate-pulse" />
@@ -452,7 +635,6 @@ export default function NewNotePage() {
                             ))}
                           </div>
                         </div>
-                        {/* Shimmer: Next Steps */}
                         <div>
                           <div className="flex items-center gap-2 mb-3">
                             <div className="h-3.5 w-3.5 rounded bg-muted-foreground/10 animate-pulse" />
@@ -480,33 +662,35 @@ export default function NewNotePage() {
               </div>
             </div>
 
-            {/* Ask bar - inside left column so it doesn't overlap transcript */}
             <div className="relative">
               <AskBar
                 context="meeting"
                 meetingTitle={title || "New note"}
                 recordingState={recordingState}
                 transcriptVisible={transcriptVisible}
-                onResumeRecording={() => {
-                  setRecordingState("recording");
-                  setTranscriptVisible(true);
-                  startSession(noteId);
+                isSummarizing={isSummarizing}
+                hasSummary={!!summary}
+                onResumeRecording={handleResume}
+                onPauseRecording={() => {
+                  setRecordingState("paused");
+                  if (usingRealAudio) {
+                    pauseAudioCapture().catch(console.error);
+                  }
                 }}
-                onPauseRecording={() => setRecordingState("paused")}
-                onStopRecording={handleStop}
+                onGenerateNotes={generateNotes}
                 onToggleTranscript={() => setTranscriptVisible(!transcriptVisible)}
                 elapsed={elapsed}
               />
             </div>
           </div>
 
-          {/* Transcript side panel */}
-          {transcriptVisible && (
+          {/* Transcript side panel — hidden during active recording if real-time transcription is off */}
+          {transcriptVisible && (showRealTimeTranscript || recordingState !== "recording") && (
             <div className="w-72 flex-shrink-0 border-l border-border bg-card/50 overflow-y-auto rounded-tl-2xl rounded-tr-2xl">
               <div className="px-4 py-3 border-b border-border">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    {isStopped ? "Transcript" : "Live Transcript"}
+                    {recordingState === "recording" ? "Live Transcript" : "Transcript"}
                   </span>
                   <button
                     onClick={() => setTranscriptVisible(false)}
@@ -515,7 +699,6 @@ export default function NewNotePage() {
                     <EyeOff className="h-3 w-3" />
                   </button>
                 </div>
-                {/* Search bar */}
                 <div className="mt-2 flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5">
                   <Search className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                   <input
@@ -532,8 +715,7 @@ export default function NewNotePage() {
                 </div>
               </div>
               <div className="p-4 space-y-3">
-                {fakeTranscriptLines
-                  .slice(0, isStopped ? fakeTranscriptLines.length : visibleLines)
+                {currentTranscript
                   .filter(line => !transcriptSearch || line.text.toLowerCase().includes(transcriptSearch.toLowerCase()))
                   .map((line, i) => (
                   <div key={i} className="animate-fade-in">
@@ -547,7 +729,7 @@ export default function NewNotePage() {
                     <p className="text-[12px] text-muted-foreground leading-relaxed pl-6">
                       {transcriptSearch ? (
                         line.text.split(new RegExp(`(${transcriptSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, j) =>
-                          part.toLowerCase() === transcriptSearch.toLowerCase() 
+                          part.toLowerCase() === transcriptSearch.toLowerCase()
                             ? <mark key={j} className="bg-accent/20 text-foreground rounded-sm px-0.5">{part}</mark>
                             : part
                         )
@@ -555,10 +737,25 @@ export default function NewNotePage() {
                     </p>
                   </div>
                 ))}
+                {!transcriptSearch && recordingState === "recording" && usingRealAudio && !selectedSTTModel && (
+                  <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2.5 mb-2">
+                    <p className="text-[11px] text-blue-600 dark:text-blue-400 leading-relaxed">
+                      <Mic className="h-3 w-3 inline mr-1 -mt-0.5" />
+                      {usingWebSpeech
+                        ? <>Using browser speech recognition. For better accuracy, download a Whisper model in <strong>Settings → Transcription</strong>.</>
+                        : <>No STT model configured. Go to <strong>Settings → Transcription</strong> to download a Whisper model or connect a cloud STT provider.</>
+                      }
+                    </p>
+                  </div>
+                )}
                 {!transcriptSearch && recordingState === "recording" && (
                   <div className="flex items-center gap-1.5 pt-1 animate-pulse">
                     <div className="h-1 w-1 rounded-full bg-destructive" />
-                    <span className="text-[10px] text-muted-foreground">Listening...</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {usingRealAudio && isCapturing
+                        ? (usingWebSpeech ? "Listening (browser speech recognition)..." : "Listening to mic & system audio...")
+                        : "Listening..."}
+                    </span>
                   </div>
                 )}
                 {!transcriptSearch && recordingState === "paused" && (
@@ -567,7 +764,7 @@ export default function NewNotePage() {
                     <span className="text-[10px] text-muted-foreground">Paused</span>
                   </div>
                 )}
-                {transcriptSearch && fakeTranscriptLines.filter(l => l.text.toLowerCase().includes(transcriptSearch.toLowerCase())).length === 0 && (
+                {transcriptSearch && currentTranscript.filter(l => l.text.toLowerCase().includes(transcriptSearch.toLowerCase())).length === 0 && (
                   <p className="text-[11px] text-muted-foreground text-center py-4">No results found</p>
                 )}
                 <div ref={transcriptEndRef} />

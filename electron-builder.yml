@@ -1,0 +1,34 @@
+appId: com.syag.notes
+productName: Syag
+directories:
+  buildResources: electron/resources
+  output: dist
+files:
+  - out/**/*
+  - package.json
+  - "!**/{.DS_Store,.git,.gitignore}"
+  - "!**/node_modules/**/{README,CHANGELOG,readme,changelog,HISTORY}*"
+  - "!**/node_modules/**/{test,__tests__,tests,example,examples,docs,.github}/**"
+  - "!**/node_modules/**/*.{md,ts,map}"
+  - "!**/node_modules/.bin"
+asarUnpack:
+  - "node_modules/better-sqlite3/**"
+  - "node_modules/onnxruntime-node/**"
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  icon: electron/resources/icon.icns
+  identity: null
+dmg:
+  artifactName: "${productName}-${version}-${arch}.dmg"
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+npmRebuild: true
