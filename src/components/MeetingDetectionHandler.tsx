@@ -8,7 +8,7 @@ interface DetectionData {
   app: string;
   title?: string;
   startTime?: number;
-  calendarEvent?: { title: string } | null;
+  calendarEvent?: { id?: string; title: string; start?: number; end?: number; joinLink?: string } | null;
 }
 
 export function MeetingDetectionHandler() {
@@ -20,16 +20,16 @@ export function MeetingDetectionHandler() {
   const [elapsedSec, setElapsedSec] = useState(0);
   const [isExiting, setIsExiting] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const calendarSyncRef = useRef(false);
 
-  // Forward calendar events to main process for correlation
+  // Forward calendar events to main process for correlation and "starting soon"
   useEffect(() => {
-    if (!api || calendarSyncRef.current || events.length === 0) return;
-    calendarSyncRef.current = true;
+    if (!api) return;
     const mapped = events.map((e) => ({
+      id: e.id,
       title: e.title || "Meeting",
       start: new Date(e.start).getTime(),
       end: new Date(e.end).getTime(),
+      joinLink: e.joinLink,
     }));
     api.app.setCalendarEvents?.(mapped);
   }, [events, api]);
@@ -54,6 +54,21 @@ export function MeetingDetectionHandler() {
       cleanupEnded();
     };
   }, [api]);
+
+  // "Meeting starting soon" — open note for this event
+  useEffect(() => {
+    if (!api?.app?.onMeetingStartingSoon) return;
+    const cleanup = api.app.onMeetingStartingSoon((data) => {
+      navigate("/new-note", {
+        state: {
+          eventTitle: data.title ?? "Meeting",
+          eventId: data.eventId,
+          joinLink: data.joinLink,
+        },
+      });
+    });
+    return cleanup;
+  }, [api, navigate]);
 
   // Tick elapsed time while notification is showing
   useEffect(() => {
@@ -92,7 +107,13 @@ export function MeetingDetectionHandler() {
 
   const handleTakeNotes = () => {
     setDetection(null);
-    navigate("/new-note");
+    navigate("/new-note", {
+      state: {
+        eventTitle: meetingTitle,
+        eventId: detection.calendarEvent?.id,
+        joinLink: detection.calendarEvent?.joinLink,
+      },
+    });
   };
 
   const handleDismiss = () => {

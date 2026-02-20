@@ -111,7 +111,7 @@ function formatTime(seconds: number) {
 export default function NewNotePage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const eventState = location.state as { eventTitle?: string; eventId?: string } | null;
+  const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string } | null;
   const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture } = useRecording();
   const { selectedSTTModel, selectedAIModel } = useModelSettings();
   const api = getElectronAPI();

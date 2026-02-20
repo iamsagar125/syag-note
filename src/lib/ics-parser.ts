@@ -5,6 +5,15 @@ export interface CalendarEvent {
   end: Date;
   location?: string;
   description?: string;
+  /** Extracted from DESCRIPTION or LOCATION (Meet/Zoom/Teams join URL) */
+  joinLink?: string;
+}
+
+const JOIN_LINK_REGEX = /https?:\/\/[^\s<>"']+/i;
+
+function extractJoinLink(text: string): string | undefined {
+  const match = text.match(JOIN_LINK_REGEX);
+  return match ? match[0].replace(/[)\],]+$/, '') : undefined;
 }
 
 /**
@@ -24,6 +33,9 @@ export function parseICS(icsContent: string): CalendarEvent[] {
     } else if (line === "END:VEVENT" && inEvent) {
       inEvent = false;
       if (current.title && current.start) {
+        const desc = current.description ?? '';
+        const loc = current.location ?? '';
+        const joinLink = extractJoinLink(desc) || extractJoinLink(loc);
         events.push({
           id: current.id || crypto.randomUUID(),
           title: current.title,
@@ -31,6 +43,7 @@ export function parseICS(icsContent: string): CalendarEvent[] {
           end: current.end || current.start,
           location: current.location,
           description: current.description,
+          joinLink,
         });
       }
     } else if (inEvent) {

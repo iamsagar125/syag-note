@@ -5,10 +5,26 @@ const COPART_BASE_URL = 'https://genie.copart.com/api'
 
 // Optional mapping for display names → API model IDs; any unknown name is passed through as-is
 const MODEL_MAP: Record<string, string> = {
-  'Opus Plan': 'opusplan',
-  'Claude Sonnet 4': 'anthropic/claude-sonnet-4-6',
+  // OpenAI
+  'GPT-4.1': 'openai/gpt-4.1',
+  'GPT-4o': 'openai/gpt-4o',
+  'GPT-4o mini': 'openai/gpt-4o-mini',
+  'GPT-5': 'openai/gpt-5',
+  'GPT-5 mini': 'openai/gpt-5-mini',
+  // Google Gemini
+  'Gemini 2.0 Flash': 'google/gemini-2.0-flash',
+  'Gemini 2.5 Flash': 'google/gemini-2.5-flash',
+  'Gemini 2.5 Pro': 'google/gemini-2.5-pro',
+  'Gemini 3 Flash Preview': 'google/gemini-3-flash-preview',
+  'Gemini 3 Pro Preview': 'google/gemini-3-pro-preview',
+  // Claude
   'Claude Haiku 4': 'anthropic/claude-haiku-4-5-20251001',
   'Claude Opus 4': 'anthropic/claude-opus-4-6',
+  'Claude Sonnet 4': 'anthropic/claude-sonnet-4-6',
+  'Opus Plan': 'opusplan',
+  // STT
+  'Whisper Large V3': 'whisper-large-v3',
+  'Whisper Large V3 Turbo': 'whisper-large-v3-turbo',
 }
 
 export async function chatCopart(

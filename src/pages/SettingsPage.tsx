@@ -1,13 +1,23 @@
 import {
   User, Mic, Globe, Calendar, Bell, Sparkles, Brain, Download,
   ChevronRight, Check, ExternalLink, Plus, Trash2, RefreshCw, HardDrive, Cloud,
-  Volume2, Save, Sliders, Monitor, Sun, Moon, FileText, ChevronDown, ChevronUp
+  Volume2, Save, Sliders, Monitor, Sun, Moon, FileText, ChevronDown, ChevronUp,
+  Search
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useModelSettings, localModels, enterpriseProviders } from "@/contexts/ModelSettingsContext";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+} from "@/components/ui/command";
 
 const sections = [
   { icon: User, label: "Account", id: "account" },
@@ -396,6 +406,57 @@ export default function SettingsPage() {
 
   const [editingApiKey, setEditingApiKey] = useState<string | null>(null);
   const [tempApiKey, setTempApiKey] = useState("");
+  const [aiModelOpen, setAiModelOpen] = useState(false);
+  const [sttModelOpen, setSttModelOpen] = useState(false);
+
+  // Build AI model options (for searchable dropdown): local + connected providers, exclude whisper for supportsStt
+  const aiOptions = useMemo(() => {
+    const out: { value: string; label: string; group: string }[] = [];
+    localModels
+      .filter((m) => m.type === "llm" && downloadStates[m.id] === "downloaded")
+      .forEach((m) => out.push({ value: `local:${m.id}`, label: `${m.name} (Local)`, group: "Local Models" }));
+    Object.entries(connectedProviders)
+      .filter(([_, v]) => v.connected)
+      .forEach(([pid]) => {
+        const provider = enterpriseProviders.find((p) => p.id === pid);
+        if (!provider || provider.sttOnly) return;
+        const aiModels = provider.supportsStt
+          ? provider.models.filter((m) => !m.toLowerCase().includes("whisper"))
+          : provider.models;
+        aiModels.forEach((m) =>
+          out.push({ value: `${pid}:${m}`, label: m, group: `${provider.icon} ${provider.name}` })
+        );
+      });
+    return out;
+  }, [connectedProviders, downloadStates]);
+
+  // Build STT model options: local + system (darwin) + connected providers (sttOnly all, supportsStt whisper-only)
+  const sttOptions = useMemo(() => {
+    const out: { value: string; label: string; group: string }[] = [];
+    localModels
+      .filter((m) => m.type === "stt" && downloadStates[m.id] === "downloaded")
+      .forEach((m) => out.push({ value: `local:${m.id}`, label: `${m.name} (Local)`, group: "Local Models" }));
+    if (api?.app?.getPlatform?.() === "darwin") {
+      out.push({ value: "system:default", label: "Apple Speech (macOS)", group: "System" });
+    }
+    Object.entries(connectedProviders)
+      .filter(([_, v]) => v.connected)
+      .forEach(([pid]) => {
+        const provider = enterpriseProviders.find((p) => p.id === pid);
+        if (!provider) return;
+        const sttModels = provider.sttOnly
+          ? provider.models
+          : provider.models.filter((m) => m.toLowerCase().includes("whisper"));
+        if (sttModels.length === 0) return;
+        sttModels.forEach((m) =>
+          out.push({ value: `${pid}:${m}`, label: m, group: `${provider.icon} ${provider.name}` })
+        );
+      });
+    return out;
+  }, [connectedProviders, downloadStates, api]);
+
+  const selectedAILabel = selectedAIModel ? (aiOptions.find((o) => o.value === selectedAIModel)?.label ?? selectedAIModel) : "";
+  const selectedSTTLabel = selectedSTTModel ? (sttOptions.find((o) => o.value === selectedSTTModel)?.label ?? selectedSTTModel) : "";
 
   // Custom vocabulary (persisted to DB)
   const [customTerms, setCustomTerms] = useState("");
@@ -564,29 +625,43 @@ export default function SettingsPage() {
                       <Brain className="h-3.5 w-3.5 text-accent" />
                       Default AI Model (for notes & chat)
                     </h3>
-                    <select
-                      value={selectedAIModel}
-                      onChange={(e) => setSelectedAIModel(e.target.value)}
-                      className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
-                    >
-                      <option value="">Select a model...</option>
-                      <optgroup label="Local Models">
-                        {localModels.filter((m) => m.type === "llm" && downloadStates[m.id] === "downloaded").map((m) => (
-                          <option key={m.id} value={`local:${m.id}`}>{m.name} (Local)</option>
-                        ))}
-                      </optgroup>
-                      {Object.entries(connectedProviders).filter(([_, v]) => v.connected).map(([pid]) => {
-                        const provider = enterpriseProviders.find((p) => p.id === pid);
-                        if (!provider || provider.sttOnly) return null;
-                        return (
-                          <optgroup key={pid} label={`${provider.icon} ${provider.name}`}>
-                            {provider.models.map((m) => (
-                              <option key={`${pid}:${m}`} value={`${pid}:${m}`}>{m}</option>
+                    <Popover open={aiModelOpen} onOpenChange={setAiModelOpen}>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="w-full flex items-center justify-between rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
+                        >
+                          <span className={selectedAILabel ? "" : "text-muted-foreground"}>
+                            {selectedAILabel || "Select a model..."}
+                          </span>
+                          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command className="rounded-md border-0">
+                          <CommandInput placeholder="Search models..." className="h-9" />
+                          <CommandList>
+                            <CommandEmpty>No model found.</CommandEmpty>
+                            {Array.from(new Set(aiOptions.map((o) => o.group))).map((group) => (
+                              <CommandGroup key={group} heading={group}>
+                                {aiOptions.filter((o) => o.group === group).map((o) => (
+                                  <CommandItem
+                                    key={o.value}
+                                    value={`${o.label} ${o.group}`}
+                                    onSelect={() => {
+                                      setSelectedAIModel(o.value);
+                                      setAiModelOpen(false);
+                                    }}
+                                  >
+                                    {o.label}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
                             ))}
-                          </optgroup>
-                        );
-                      })}
-                    </select>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   {/* Default STT Model */}
@@ -595,38 +670,43 @@ export default function SettingsPage() {
                       <Volume2 className="h-3.5 w-3.5 text-accent" />
                       Speech-to-Text Model (transcription)
                     </h3>
-                    <select
-                      value={selectedSTTModel}
-                      onChange={(e) => setSelectedSTTModel(e.target.value)}
-                      className="w-full rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
-                    >
-                      <option value="">Select a model...</option>
-                      <optgroup label="Local Models">
-                        {localModels.filter((m) => m.type === "stt" && downloadStates[m.id] === "downloaded").map((m) => (
-                          <option key={m.id} value={`local:${m.id}`}>{m.name} (Local)</option>
-                        ))}
-                      </optgroup>
-                      {api?.app?.getPlatform?.() === "darwin" && (
-                        <optgroup label="System">
-                          <option value="system:default">Apple Speech (macOS)</option>
-                        </optgroup>
-                      )}
-                      {Object.entries(connectedProviders).filter(([_, v]) => v.connected).map(([pid]) => {
-                        const provider = enterpriseProviders.find((p) => p.id === pid);
-                        if (!provider) return null;
-                        const sttModels = provider.sttOnly || provider.supportsStt
-                          ? provider.models
-                          : provider.models.filter((m) => m.toLowerCase().includes("whisper"));
-                        if (sttModels.length === 0) return null;
-                        return (
-                          <optgroup key={pid} label={`${provider.icon} ${provider.name}`}>
-                            {sttModels.map((m) => (
-                              <option key={`${pid}:${m}`} value={`${pid}:${m}`}>{m}</option>
+                    <Popover open={sttModelOpen} onOpenChange={setSttModelOpen}>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="w-full flex items-center justify-between rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
+                        >
+                          <span className={selectedSTTLabel ? "" : "text-muted-foreground"}>
+                            {selectedSTTLabel || "Select a model..."}
+                          </span>
+                          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                        <Command className="rounded-md border-0">
+                          <CommandInput placeholder="Search models..." className="h-9" />
+                          <CommandList>
+                            <CommandEmpty>No model found.</CommandEmpty>
+                            {Array.from(new Set(sttOptions.map((o) => o.group))).map((group) => (
+                              <CommandGroup key={group} heading={group}>
+                                {sttOptions.filter((o) => o.group === group).map((o) => (
+                                  <CommandItem
+                                    key={o.value}
+                                    value={`${o.label} ${o.group}`}
+                                    onSelect={() => {
+                                      setSelectedSTTModel(o.value);
+                                      setSttModelOpen(false);
+                                    }}
+                                  >
+                                    {o.label}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
                             ))}
-                          </optgroup>
-                        );
-                      })}
-                    </select>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
                   </div>
 
                   {/* Local Models Section */}

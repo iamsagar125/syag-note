@@ -97,7 +97,7 @@ export function registerIPCHandlers(): void {
   ipcMain.handle('tray:update-meeting-info', (_e, info: { title: string; startTime: number } | null) => {
     updateTrayMeetingInfo(info)
   })
-  ipcMain.handle('meeting:set-calendar-events', (_e, events: Array<{ title: string; start: number; end: number }>) => {
+  ipcMain.handle('meeting:set-calendar-events', (_e, events: Array<{ id: string; title: string; start: number; end: number; joinLink?: string }>) => {
     setCalendarEvents(events)
     return true
   })

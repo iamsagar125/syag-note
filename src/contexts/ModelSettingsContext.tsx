@@ -15,7 +15,30 @@ export type ModelProvider = {
 export const enterpriseProviders: ModelProvider[] = [
   { id: "openai", name: "OpenAI", models: ["GPT-4o", "GPT-4o mini", "GPT-4 Turbo", "o1-preview"], icon: "🟢" },
   { id: "anthropic", name: "Anthropic (Claude)", models: ["Claude 4 Sonnet", "Claude 4 Opus", "Claude 3.5 Haiku"], icon: "🟤" },
-  { id: "copart", name: "Copart Genie", models: ["Opus Plan", "Claude Sonnet 4", "Claude Haiku 4", "Claude Opus 4"], icon: "🟡", supportsStt: true },
+  {
+    id: "copart",
+    name: "Copart Genie",
+    models: [
+      "GPT-4.1",
+      "GPT-4o",
+      "GPT-4o mini",
+      "GPT-5",
+      "GPT-5 mini",
+      "Gemini 2.0 Flash",
+      "Gemini 2.5 Flash",
+      "Gemini 2.5 Pro",
+      "Gemini 3 Flash Preview",
+      "Gemini 3 Pro Preview",
+      "Claude Haiku 4",
+      "Claude Opus 4",
+      "Claude Sonnet 4",
+      "Opus Plan",
+      "Whisper Large V3",
+      "Whisper Large V3 Turbo",
+    ],
+    icon: "🟡",
+    supportsStt: true,
+  },
   { id: "google", name: "Google (Gemini)", models: ["Gemini 2.5 Pro", "Gemini 2.5 Flash", "Gemini 2.0 Flash"], icon: "🔵" },
   { id: "deepgram", name: "Deepgram", models: ["Nova-2", "Nova-2 Medical", "Nova-2 Meeting"], icon: "🟣", sttOnly: true },
   { id: "assemblyai", name: "AssemblyAI", models: ["Universal-2", "Nano"], icon: "🔴", sttOnly: true },
@@ -318,7 +341,10 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
       .forEach(([pid]) => {
         const provider = enterpriseProviders.find((p) => p.id === pid);
         if (!provider || provider.sttOnly) return;
-        provider.models.forEach((m) =>
+        const aiModels = provider.supportsStt
+          ? provider.models.filter((m) => !m.toLowerCase().includes("whisper"))
+          : provider.models;
+        aiModels.forEach((m) =>
           models.push({ value: `${pid}:${m}`, label: m, group: provider.name })
         );
       });

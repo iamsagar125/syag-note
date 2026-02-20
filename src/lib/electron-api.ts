@@ -80,8 +80,9 @@ type ElectronAPI = {
     onTrayPauseRecording?: (callback: () => void) => () => void
     onMeetingDetected: (callback: (data: { app: string; title?: string; startTime?: number; calendarEvent?: any }) => void) => () => void
     onMeetingEnded: (callback: (data: { app: string }) => void) => () => void
+    onMeetingStartingSoon?: (callback: (data: { eventId?: string; title?: string; start?: number; end?: number; joinLink?: string }) => void) => () => void
     onPowerModeChanged?: (callback: (data: { onBattery: boolean }) => void) => () => void
-    setCalendarEvents?: (events: Array<{ title: string; start: number; end: number }>) => Promise<boolean>
+    setCalendarEvents?: (events: Array<{ id: string; title: string; start: number; end: number; joinLink?: string }>) => Promise<boolean>
     updateTrayMeetingInfo?: (info: { title: string; startTime: number } | null) => Promise<void>
   }
 }

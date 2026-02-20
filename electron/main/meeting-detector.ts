@@ -1,11 +1,12 @@
 import { exec } from 'child_process'
 import { BrowserWindow } from 'electron'
-import { showMeetingDetectedNotification, updateTrayMeetingInfo } from './tray'
+import { showMeetingDetectedNotification, showMeetingStartingSoonNotification, updateTrayMeetingInfo } from './tray'
 
-// Known meeting app process substrings -> display name
+// Known meeting app process substrings -> display name (match ps -axo comm= output on macOS)
 const MEETING_PROCESS_PATTERNS: Array<[RegExp, string]> = [
-  [/zoom\.us|CptHost/i, 'Zoom'],
-  [/MSTeams|Microsoft Teams|com\.microsoft\.teams/i, 'Microsoft Teams'],
+  [/zoom\.us|CptHost|^Zoom$/i, 'Zoom'],
+  [/MSTeams|Microsoft Teams|com\.microsoft\.teams|^Teams$/i, 'Microsoft Teams'],
+  [/Google Meet|^Meet$/i, 'Google Meet'],
   [/webex|webexmta/i, 'Webex'],
   [/FaceTime/i, 'FaceTime'],
   [/GoTo Meeting|GoToMeeting/i, 'GoTo Meeting'],
@@ -26,10 +27,16 @@ let meetingStartTime: number | null = null
 let notifiedForCurrentMeeting = false
 let lastProcessHash = ''
 let isChecking = false
-let calendarEvents: Array<{ title: string; start: number; end: number }> = []
+export type CalendarEventForMain = { id: string; title: string; start: number; end: number; joinLink?: string }
+let calendarEvents: CalendarEventForMain[] = []
+let startingSoonInterval: ReturnType<typeof setInterval> | null = null
+const notifiedStartingSoonIds = new Set<string>()
+const STARTING_SOON_WINDOW_MS = 90 * 1000   // notify when 90s before start
+const STARTING_SOON_END_MS = 45 * 1000     // until 45s before start
 
-let currentPollMs = 15000
-const COOLDOWN_MS = 60000
+// Poll every 5s so joining a call triggers notification quickly (Granola/Notion-style)
+let currentPollMs = 5000
+const COOLDOWN_MS = 90000
 
 function execAsync(cmd: string, timeoutMs = 3000): Promise<string> {
   return new Promise((resolve) => {
@@ -47,25 +54,51 @@ function simpleHash(str: string): string {
   return String(h)
 }
 
-export function setCalendarEvents(events: Array<{ title: string; start: number; end: number }>): void {
+export function setCalendarEvents(events: CalendarEventForMain[]): void {
   calendarEvents = events
 }
 
-function findCurrentCalendarEvent(): { title: string } | null {
+/** Match if now is within 15 min before start or 5 min after end (Granola-style). */
+function findCurrentCalendarEvent(): CalendarEventForMain | null {
   const now = Date.now()
-  const windowMs = 5 * 60 * 1000 // 5 min grace before/after
+  const beforeStartMs = 15 * 60 * 1000
+  const afterEndMs = 5 * 60 * 1000
   for (const evt of calendarEvents) {
-    if (now >= evt.start - windowMs && now <= evt.end + windowMs) {
-      return { title: evt.title }
+    if (now >= evt.start - beforeStartMs && now <= evt.end + afterEndMs) {
+      return evt
     }
   }
   return null
 }
 
+function checkStartingSoon(): void {
+  const now = Date.now()
+  for (const evt of calendarEvents) {
+    const diff = evt.start - now
+    if (diff >= 0 && diff <= STARTING_SOON_WINDOW_MS && diff >= STARTING_SOON_END_MS) {
+      if (notifiedStartingSoonIds.has(evt.id)) continue
+      notifiedStartingSoonIds.add(evt.id)
+      const body = evt.joinLink ? `Join: ${evt.joinLink}` : 'Click to open note'
+      showMeetingStartingSoonNotification(evt.title, body, evt.id, evt.joinLink)
+      // Renderer navigates only when user clicks the notification (tray sends meeting:starting-soon on click)
+      // Forget after 2h so same event tomorrow can notify again
+      setTimeout(() => notifiedStartingSoonIds.delete(evt.id), 2 * 60 * 60 * 1000)
+      break
+    }
+  }
+}
+
 export function startMeetingDetection(win: BrowserWindow): void {
   mainWindow = win
   if (pollInterval) return
+  // Run first check soon so we don't wait a full interval after app start
+  setTimeout(() => checkForMeetings(), 2000)
   pollInterval = setInterval(checkForMeetings, currentPollMs)
+  // "Starting soon" check every 30s
+  if (!startingSoonInterval) {
+    startingSoonInterval = setInterval(checkStartingSoon, 30000)
+    checkStartingSoon()
+  }
   console.log(`[MeetingDetector] Started (async, ${currentPollMs / 1000}s interval)`)
 }
 
@@ -73,6 +106,10 @@ export function stopMeetingDetection(): void {
   if (pollInterval) {
     clearInterval(pollInterval)
     pollInterval = null
+  }
+  if (startingSoonInterval) {
+    clearInterval(startingSoonInterval)
+    startingSoonInterval = null
   }
 }
 
@@ -117,32 +154,27 @@ async function checkForMeetings(): Promise<void> {
     }
 
     if (matchedApp && !notifiedForCurrentMeeting) {
-      // Tier 3: notify when meeting app is running; optionally require mic active to reduce false positives
-      const audioActive = await checkMicActive()
-      // Notify if mic is active OR always on first match (so joining a meeting reliably triggers notification)
-      if (audioActive || !activeMeetingApp) {
-        activeMeetingApp = matchedApp
-        meetingStartTime = Date.now()
-        notifiedForCurrentMeeting = true
+      // Notify as soon as meeting app is in process list (no mic gate so joining triggers immediately)
+      activeMeetingApp = matchedApp
+      meetingStartTime = Date.now()
+      notifiedForCurrentMeeting = true
 
-        // Correlate with calendar
-        const calEvent = findCurrentCalendarEvent()
-        const meetingTitle = calEvent?.title || `${matchedApp} Meeting`
+      const calEvent = findCurrentCalendarEvent()
+      const meetingTitle = calEvent?.title || `${matchedApp} Meeting`
 
-        console.log(`[MeetingDetector] Meeting detected: ${meetingTitle}`)
+      console.log(`[MeetingDetector] Meeting detected: ${meetingTitle}`)
 
-        const detectionData = {
-          app: matchedApp,
-          title: meetingTitle,
-          calendarEvent: calEvent,
-          startTime: meetingStartTime,
-        }
-
-        showMeetingDetectedNotification(meetingTitle, matchedApp)
-        mainWindow?.webContents.send('meeting:detected', detectionData)
-
-        setTimeout(() => { notifiedForCurrentMeeting = false }, COOLDOWN_MS)
+      const detectionData = {
+        app: matchedApp,
+        title: meetingTitle,
+        calendarEvent: calEvent,
+        startTime: meetingStartTime,
       }
+
+      showMeetingDetectedNotification(meetingTitle, matchedApp)
+      mainWindow?.webContents.send('meeting:detected', detectionData)
+
+      setTimeout(() => { notifiedForCurrentMeeting = false }, COOLDOWN_MS)
     } else if (!matchedApp && activeMeetingApp) {
       console.log(`[MeetingDetector] Meeting ended: ${activeMeetingApp}`)
       mainWindow?.webContents.send('meeting:ended', { app: activeMeetingApp })

@@ -110,12 +110,6 @@ function rebuildMenu(): void {
         mainWindow?.webContents.send('tray:pause-recording')
       }
     })
-    template.push({
-      label: 'End Meeting',
-      click: () => {
-        mainWindow?.webContents.send('tray:stop-recording')
-      }
-    })
   } else if (isRecording) {
     template.push({
       label: '● Recording...',
@@ -128,12 +122,6 @@ function rebuildMenu(): void {
         mainWindow?.show()
         mainWindow?.focus()
         mainWindow?.webContents.send('tray:navigate-to-meeting')
-      }
-    })
-    template.push({
-      label: 'Stop Recording',
-      click: () => {
-        mainWindow?.webContents.send('tray:stop-recording')
       }
     })
   } else {
@@ -207,6 +195,33 @@ export function showMeetingDetectedNotification(meetingTitle: string, appName: s
     mainWindow?.show()
     mainWindow?.focus()
     mainWindow?.webContents.send('tray:start-recording')
+  })
+
+  notification.show()
+}
+
+export function showMeetingStartingSoonNotification(
+  title: string,
+  body: string,
+  eventId?: string,
+  joinLink?: string
+): void {
+  if (!Notification.isSupported()) return
+
+  const notification = new Notification({
+    title: 'Meeting starting soon',
+    body: `${title} — ${body}`,
+    silent: false,
+  })
+
+  notification.on('click', () => {
+    mainWindow?.show()
+    mainWindow?.focus()
+    mainWindow?.webContents.send('meeting:starting-soon', {
+      eventId,
+      title,
+      joinLink,
+    })
   })
 
   notification.show()

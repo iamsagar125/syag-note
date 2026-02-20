@@ -128,6 +128,11 @@ const electronAPI = {
       ipcRenderer.on('meeting:ended', handler)
       return () => ipcRenderer.removeListener('meeting:ended', handler)
     },
+    onMeetingStartingSoon: (callback: (data: { eventId?: string; title?: string; start?: number; end?: number; joinLink?: string }) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on('meeting:starting-soon', handler)
+      return () => ipcRenderer.removeListener('meeting:starting-soon', handler)
+    },
     onTrayNavigateToMeeting: (callback: () => void) => {
       ipcRenderer.on('tray:navigate-to-meeting', callback)
       return () => ipcRenderer.removeListener('tray:navigate-to-meeting', callback)
@@ -136,7 +141,7 @@ const electronAPI = {
       ipcRenderer.on('tray:pause-recording', callback)
       return () => ipcRenderer.removeListener('tray:pause-recording', callback)
     },
-    setCalendarEvents: (events: Array<{ title: string; start: number; end: number }>) =>
+    setCalendarEvents: (events: Array<{ id: string; title: string; start: number; end: number; joinLink?: string }>) =>
       ipcRenderer.invoke('meeting:set-calendar-events', events),
     updateTrayMeetingInfo: (info: { title: string; startTime: number } | null) =>
       ipcRenderer.invoke('tray:update-meeting-info', info),
