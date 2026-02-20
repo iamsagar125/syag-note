@@ -28,11 +28,13 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
   const refreshTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const persist = useCallback((evts: CalendarEvent[], source: string, feedUrl?: string) => {
-    setEvents(evts);
+    // Only show events with a meeting link and exclude full-day blocks (focus blocks, etc.)
+    const filtered = evts.filter((e) => e.joinLink && !e.isAllDay);
+    setEvents(filtered);
     setIcsSource(source);
     setError(null);
     setLastRefresh(new Date());
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(evts));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
     localStorage.setItem(SOURCE_KEY, source);
     if (feedUrl) localStorage.setItem(URL_KEY, feedUrl);
   }, []);
@@ -67,7 +69,9 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
       const feedUrl = localStorage.getItem(URL_KEY);
       if (stored) {
         const parsed = JSON.parse(stored) as CalendarEvent[];
-        setEvents(parsed.map(e => ({ ...e, start: new Date(e.start), end: new Date(e.end) })));
+        const withDates = parsed.map((e) => ({ ...e, start: new Date(e.start), end: new Date(e.end) }));
+        const filtered = withDates.filter((e) => e.joinLink && !e.isAllDay);
+        setEvents(filtered);
       }
       if (source) setIcsSource(source);
       // Auto-refresh URL feeds on mount

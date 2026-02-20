@@ -119,7 +119,7 @@ const Index = () => {
                 <h2 className="font-display text-lg text-foreground">Coming up</h2>
                 {notes.length > 0 && (
                   <button
-                    onClick={() => navigate("/new-note")}
+                    onClick={() => navigate("/new-note", { state: { startFresh: true } })}
                     className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
                   >
                     <Plus className="h-4 w-4" />
@@ -184,7 +184,7 @@ const Index = () => {
                   Start a quick recording to capture your first meeting notes.
                 </p>
                 <button
-                  onClick={() => navigate("/new-note")}
+                  onClick={() => navigate("/new-note", { state: { startFresh: true } })}
                   className="mt-5 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
                 >
                   Quick Note

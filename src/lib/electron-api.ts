@@ -70,6 +70,9 @@ type ElectronAPI = {
     set: (service: string, value: string) => Promise<boolean>
     delete: (service: string) => Promise<boolean>
   }
+  copart: {
+    test: () => Promise<{ ok: boolean; error?: string }>
+  }
   app: {
     getVersion: () => Promise<string>
     getPlatform: () => string

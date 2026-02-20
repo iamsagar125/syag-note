@@ -7,6 +7,8 @@ export interface CalendarEvent {
   description?: string;
   /** Extracted from DESCRIPTION or LOCATION (Meet/Zoom/Teams join URL) */
   joinLink?: string;
+  /** True when DTSTART is date-only (all-day / full-day block) */
+  isAllDay?: boolean;
 }
 
 const JOIN_LINK_REGEX = /https?:\/\/[^\s<>"']+/i;
@@ -24,7 +26,7 @@ export function parseICS(icsContent: string): CalendarEvent[] {
   const lines = unfoldLines(icsContent);
 
   let inEvent = false;
-  let current: Partial<CalendarEvent> = {};
+  let current: Partial<CalendarEvent> & { isAllDay?: boolean } = {};
 
   for (const line of lines) {
     if (line === "BEGIN:VEVENT") {
@@ -44,6 +46,7 @@ export function parseICS(icsContent: string): CalendarEvent[] {
           location: current.location,
           description: current.description,
           joinLink,
+          isAllDay: current.isAllDay,
         });
       }
     } else if (inEvent) {
@@ -56,9 +59,12 @@ export function parseICS(icsContent: string): CalendarEvent[] {
         case "SUMMARY":
           current.title = unescapeICS(value);
           break;
-        case "DTSTART":
+        case "DTSTART": {
+          const clean = value.replace(/[^0-9TZ]/g, "");
+          current.isAllDay = clean.length <= 8; // date-only = all-day
           current.start = parseICSDate(value);
           break;
+        }
         case "DTEND":
           current.end = parseICSDate(value);
           break;

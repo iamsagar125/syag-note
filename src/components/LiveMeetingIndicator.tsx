@@ -38,10 +38,9 @@ export function LiveMeetingIndicator() {
 
   const prefs = loadPreferences();
 
-  // Only show when actively recording; hide when paused so it doesn't persist
+  // Show when there is an active session and we're not on the new-note page (so user can go back to that note)
   if (
     !activeSession ||
-    !activeSession.isRecording ||
     location.pathname === "/new-note" ||
     !prefs.showRecordingIndicator ||
     manuallyHidden

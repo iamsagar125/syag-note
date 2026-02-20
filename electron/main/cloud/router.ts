@@ -95,4 +95,24 @@ export async function routeSTT(wavBuffer: Buffer, model: string): Promise<string
   }
 }
 
+/**
+ * Test Copart Genie API key by sending a minimal chat request.
+ * Returns { ok: true } or { ok: false, error: string }.
+ * Common failures: no key in Settings; "Invalid API key" (401); wrong base URL or model ID (4xx/5xx from genie.copart.com).
+ */
+export async function testCopartConnection(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const apiKey = getApiKey('copart')
+    await chatCopart(
+      [{ role: 'user', content: 'Reply with exactly: OK' }],
+      'Claude Sonnet 4',
+      apiKey
+    )
+    return { ok: true }
+  } catch (err: any) {
+    const message = err?.message ?? String(err)
+    return { ok: false, error: message }
+  }
+}
+
 export { chat } from '../models/llm-engine'

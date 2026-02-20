@@ -4,6 +4,7 @@ import {
   Volume2, Save, Sliders, Monitor, Sun, Moon, FileText, ChevronDown, ChevronUp,
   Search
 } from "lucide-react";
+import { toast } from "sonner";
 import { Sidebar } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -519,6 +520,25 @@ export default function SettingsPage() {
     await disconnectProvider(providerId);
   };
 
+  const [testingCopart, setTestingCopart] = useState(false);
+  const handleTestCopart = async () => {
+    const electronApi = getElectronAPI();
+    if (!electronApi?.copart?.test) return;
+    setTestingCopart(true);
+    try {
+      const result = await electronApi.copart.test();
+      if (result.ok) {
+        toast.success("Copart Genie: connection OK");
+      } else {
+        toast.error(result.error ?? "Connection failed");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Test failed");
+    } finally {
+      setTestingCopart(false);
+    }
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar />
@@ -834,6 +854,16 @@ export default function SettingsPage() {
                                       <Check className="h-3 w-3" />
                                       Connected
                                     </span>
+                                    {provider.id === "copart" && (
+                                      <button
+                                        onClick={handleTestCopart}
+                                        disabled={testingCopart}
+                                        className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-foreground hover:bg-secondary disabled:opacity-50 transition-colors"
+                                        title="Test API key with Copart Genie"
+                                      >
+                                        {testingCopart ? "Testing…" : "Test connection"}
+                                      </button>
+                                    )}
                                     <button
                                       onClick={() => handleDisconnectProvider(provider.id)}
                                       className="rounded p-1 text-muted-foreground hover:text-destructive transition-colors"

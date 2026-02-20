@@ -106,6 +106,10 @@ const electronAPI = {
     delete: (service: string) => ipcRenderer.invoke('keychain:delete', service),
   },
 
+  copart: {
+    test: () => ipcRenderer.invoke('copart:test') as Promise<{ ok: boolean; error?: string }>,
+  },
+
   app: {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
     getPlatform: () => process.platform,

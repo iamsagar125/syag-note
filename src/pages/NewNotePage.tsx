@@ -16,6 +16,7 @@ import { useNotes } from "@/contexts/NotesContext";
 import { useRecording } from "@/contexts/RecordingContext";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
+import { toast } from "sonner";
 import type { SummaryData } from "@/components/EditableSummary";
 
 const BUILTIN_TEMPLATES = [
@@ -111,7 +112,7 @@ function formatTime(seconds: number) {
 export default function NewNotePage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string } | null;
+  const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string; startFresh?: boolean } | null;
   const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture } = useRecording();
   const { selectedSTTModel, selectedAIModel } = useModelSettings();
   const api = getElectronAPI();
@@ -197,20 +198,55 @@ export default function NewNotePage() {
 
   useEffect(() => {
     try {
+      const startFresh = eventState?.startFresh === true;
+
+      // User explicitly chose "New note" / "Quick Note": stop previous session, run summary for it, then start fresh
+      if (startFresh) {
+        const hadSession = activeSession?.noteId;
+        const hadContent = transcriptRef.current.length > 0 || (typeof personalNotes === "string" && personalNotes.trim().length > 0);
+        const doStartNew = () => {
+          clearSession();
+          const newId = crypto.randomUUID();
+          setNoteId(newId);
+          setTitle(eventState?.eventTitle ?? "");
+          setSummary(null);
+          setPersonalNotes("");
+          setRecordingState("recording");
+          startSession(newId);
+          if (usingRealAudio) {
+            startAudioCapture(selectedSTTModel || "").catch((err) => console.error("Audio capture failed:", err));
+          }
+        };
+        if (hadSession && hadContent && usingRealAudio) {
+          pauseAudioCapture()
+            .catch(console.error)
+            .then(() => generateNotes())
+            .then(() => stopAudioCapture())
+            .then(() => doStartNew())
+            .catch((err) => {
+              console.error("New note transition error:", err);
+              doStartNew();
+            });
+        } else {
+          if (hadSession && usingRealAudio) stopAudioCapture().catch(console.error);
+          doStartNew();
+        }
+        return;
+      }
+
       // If we have an active session but no session in URL, preserve it so timer and state continue
       if (!existingSessionId && activeSession?.noteId) {
         navigate(`/new-note?session=${activeSession.noteId}`, { replace: true });
         return;
       }
       if (!isReturning) {
-        // Stop any previous recording before starting a new one
         if (activeSession?.isRecording && usingRealAudio) {
           stopAudioCapture().catch(console.error);
         }
         startSession(noteId);
         if (usingRealAudio) {
-          startAudioCapture(selectedSTTModel || '').catch((err) => {
-            console.error('Audio capture failed:', err);
+          startAudioCapture(selectedSTTModel || "").catch((err) => {
+            console.error("Audio capture failed:", err);
           });
         }
       } else if (activeSession) {
@@ -220,7 +256,7 @@ export default function NewNotePage() {
         }
       }
     } catch (err) {
-      console.error('NewNotePage mount error:', err);
+      console.error("NewNotePage mount error:", err);
     }
     return () => {};
   }, []);
@@ -771,7 +807,10 @@ export default function NewNotePage() {
                     pauseAudioCapture().catch(console.error);
                   }
                   if (transcriptRef.current.length > 0 || personalNotes.trim().length > 0) {
-                    generateNotes();
+                    generateNotes().catch((err) => {
+                      console.error("Summary failed:", err);
+                      toast.error("Summary failed. Try again.");
+                    });
                   }
                 }}
                 onToggleTranscript={() => setTranscriptVisible(!transcriptVisible)}

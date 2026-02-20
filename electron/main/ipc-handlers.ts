@@ -9,7 +9,7 @@ import {
 import { downloadModel, cancelDownload, deleteModel, listDownloadedModels } from './models/manager'
 import { startRecording, stopRecording, pauseRecording, resumeRecording, processAudioChunk } from './audio/capture'
 import { summarize } from './models/llm-engine'
-import { chat } from './cloud/router'
+import { chat, testCopartConnection } from './cloud/router'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 
@@ -198,6 +198,9 @@ export function registerIPCHandlers(): void {
     saveKeychain(chain)
     return true
   })
+
+  // --- Copart Genie test ---
+  ipcMain.handle('copart:test', () => testCopartConnection())
 
   // --- App ---
   ipcMain.handle('app:get-version', () => app.getVersion())
