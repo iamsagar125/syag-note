@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { toast } from "sonner";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 export type ModelProvider = {
@@ -27,7 +28,7 @@ export type LocalModel = {
 };
 
 export const localModels: LocalModel[] = [
-  { id: "mlx-whisper-large-v3-turbo", name: "MLX Whisper Large V3 Turbo", size: "~3 GB", type: "stt", description: "Best quality — uses Apple Neural Engine, requires pip3 install mlx-whisper" },
+  { id: "mlx-whisper-large-v3-turbo", name: "MLX Whisper Large V3 Turbo", size: "~3 GB", type: "stt", description: "Best quality — uses Apple Neural Engine. Click Download to install automatically." },
   { id: "whisper-large-v3-turbo", name: "Whisper Large V3 Turbo", size: "1.6 GB", type: "stt", description: "Recommended — Nova-2 quality, 4x faster than Large V3" },
   { id: "whisper-large-v3", name: "Whisper Large V3", size: "3.1 GB", type: "stt", description: "Best accuracy, slower" },
   { id: "whisper-medium", name: "Whisper Medium", size: "1.5 GB", type: "stt", description: "Good balance of speed and accuracy" },
@@ -217,12 +218,15 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
         const success = await api.models.installMLXWhisper();
         if (success) {
           setDownloadStates((prev) => ({ ...prev, [modelId]: "downloaded" }));
+          toast.success("MLX Whisper ready");
         } else {
           setDownloadStates((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
+          toast.error("MLX Whisper install failed. Install Python 3 and run: python3 -m pip install mlx-whisper");
         }
       } catch (err) {
         console.error('MLX Whisper install failed:', err);
         setDownloadStates((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
+        toast.error("MLX Whisper install failed. Ensure Python 3 is installed.");
       }
       return;
     }

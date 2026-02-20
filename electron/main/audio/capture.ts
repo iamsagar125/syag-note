@@ -10,7 +10,7 @@ let isRecording = false
 let isPaused = false
 let transcriptCallback: TranscriptCallback | null = null
 let statusCallback: StatusCallback | null = null
-let audioBuffer: Float32Array[] = []
+const audioBuffers: Float32Array[][] = [[], []]
 let recordingStartTime = 0
 let chunkTimer: ReturnType<typeof setInterval> | null = null
 let silenceTimer: ReturnType<typeof setInterval> | null = null
@@ -25,6 +25,8 @@ const CHUNK_INTERVAL_ACTIVE_MS = 30000
 const CHUNK_INTERVAL_IDLE_MS = 60000
 const SAMPLE_RATE = 16000
 const AUTO_PAUSE_SILENCE_MS = 60000
+const MIN_SAMPLES_PER_CHANNEL = 16000 * 10 // 10s minimum for STT
+const SPEAKER_BY_CHANNEL = ['You', 'Others'] as const
 
 export let currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
 
@@ -37,9 +39,9 @@ function restartChunkTimer(): void {
   if (chunkTimer) clearInterval(chunkTimer)
   if (!isRecording) return
   chunkTimer = setInterval(() => {
-    if (!isPaused && audioBuffer.length > 0 && !isProcessing) {
-      processBufferedAudio()
-    }
+    if (isPaused || isProcessing) return
+    const hasData = audioBuffers[0].length > 0 || audioBuffers[1].length > 0
+    if (hasData) processBufferedAudio()
   }, currentChunkIntervalMs)
 }
 
@@ -56,7 +58,8 @@ export async function startRecording(
   autoPaused = false
   transcriptCallback = onTranscript
   statusCallback = onStatus || null
-  audioBuffer = []
+  audioBuffers[0].length = 0
+  audioBuffers[1].length = 0
   recordingStartTime = Date.now()
   lastSpeechTime = Date.now()
   currentSTTModel = options.sttModel
@@ -75,9 +78,9 @@ export async function startRecording(
   consecutiveSilentChunks = 0
   currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
   chunkTimer = setInterval(() => {
-    if (!isPaused && audioBuffer.length > 0 && !isProcessing) {
-      processBufferedAudio()
-    }
+    if (isPaused || isProcessing) return
+    const hasData = audioBuffers[0].length > 0 || audioBuffers[1].length > 0
+    if (hasData) processBufferedAudio()
   }, currentChunkIntervalMs)
 
   // Silence monitor: auto-pause when no speech detected for 30s
@@ -133,10 +136,10 @@ export function resumeRecording(): void {
   lastSpeechTime = Date.now()
 }
 
-export function processAudioChunk(pcmData: Float32Array): boolean {
+export function processAudioChunk(pcmData: Float32Array, channel: number): boolean {
   if (!isRecording) return false
 
-  // When auto-paused, still accept audio — check for energy to auto-resume
+  const ch = channel === 1 ? 1 : 0
   if (autoPaused) {
     const energy = pcmData.reduce((sum, v) => sum + v * v, 0) / pcmData.length
     if (energy > 0.001) {
@@ -151,103 +154,109 @@ export function processAudioChunk(pcmData: Float32Array): boolean {
 
   if (isPaused) return false
 
-  audioBuffer.push(pcmData)
+  audioBuffers[ch].push(pcmData)
   return true
 }
 
 async function processBufferedAudio(): Promise<void> {
-  if (audioBuffer.length === 0 || !transcriptCallback) return
+  if (!transcriptCallback) return
   if (isProcessing) return
 
-  isProcessing = true
+  for (const channel of [0, 1]) {
+    const chunks = audioBuffers[channel].splice(0)
+    if (chunks.length === 0) continue
 
-  const chunks = audioBuffer.splice(0)
-  const totalLength = chunks.reduce((sum, c) => sum + c.length, 0)
-  const merged = new Float32Array(totalLength)
-  let offset = 0
-  for (const chunk of chunks) {
-    merged.set(chunk, offset)
-    offset += chunk.length
-  }
-
-  const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000)
-  const chunkStartSec = Math.max(0, elapsedSec - Math.floor(totalLength / SAMPLE_RATE))
-
-  try {
-    if (!currentSTTModel) {
-      return
+    const totalLength = chunks.reduce((sum, c) => sum + c.length, 0)
+    if (totalLength < MIN_SAMPLES_PER_CHANNEL) {
+      audioBuffers[channel].push(...chunks)
+      continue
     }
 
-    const energy = merged.reduce((sum, v) => sum + v * v, 0) / merged.length
-    if (energy < 0.0001) {
-      consecutiveSilentChunks++
-      if (consecutiveSilentChunks >= 2 && currentChunkIntervalMs < CHUNK_INTERVAL_IDLE_MS) {
-        currentChunkIntervalMs = CHUNK_INTERVAL_IDLE_MS
-        restartChunkTimer()
-      }
-      return
+    isProcessing = true
+
+    const merged = new Float32Array(totalLength)
+    let offset = 0
+    for (const chunk of chunks) {
+      merged.set(chunk, offset)
+      offset += chunk.length
     }
 
-    let speechAudio = merged
-    let hasSpeech = true
+    const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000)
+    const chunkStartSec = Math.max(0, elapsedSec - Math.floor(totalLength / SAMPLE_RATE))
+    const speaker = SPEAKER_BY_CHANNEL[channel]
+
     try {
-      const vadSegments = await runVAD(merged, SAMPLE_RATE)
-      if (vadSegments.length === 0) {
-        hasSpeech = false
+      if (!currentSTTModel) {
+        isProcessing = false
         return
       }
-      // Skip segments with less than 0.5s of speech
-      const totalSpeechDuration = vadSegments.reduce((sum, s) => sum + (s.end - s.start), 0)
-      if (totalSpeechDuration < 0.5) {
-        return
+
+      const energy = merged.reduce((sum, v) => sum + v * v, 0) / merged.length
+      if (energy < 0.0001) {
+        consecutiveSilentChunks++
+        if (consecutiveSilentChunks >= 2 && currentChunkIntervalMs < CHUNK_INTERVAL_IDLE_MS) {
+          currentChunkIntervalMs = CHUNK_INTERVAL_IDLE_MS
+          restartChunkTimer()
+        }
+        isProcessing = false
+        continue
       }
-      speechAudio = extractSpeechSegments(merged, vadSegments, SAMPLE_RATE)
-    } catch (vadErr) {
-      console.warn('VAD failed, processing full audio:', vadErr)
-    }
 
-    if (hasSpeech) {
-      lastSpeechTime = Date.now()
-      consecutiveSilentChunks = 0
-      if (currentChunkIntervalMs > CHUNK_INTERVAL_ACTIVE_MS) {
-        currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
-        restartChunkTimer()
+      let speechAudio = merged
+      let hasSpeech = true
+      try {
+        const vadSegments = await runVAD(merged, SAMPLE_RATE)
+        if (vadSegments.length === 0) {
+          hasSpeech = false
+          isProcessing = false
+          continue
+        }
+        const totalSpeechDuration = vadSegments.reduce((sum, s) => sum + (s.end - s.start), 0)
+        if (totalSpeechDuration < 0.5) {
+          isProcessing = false
+          continue
+        }
+        speechAudio = extractSpeechSegments(merged, vadSegments, SAMPLE_RATE)
+      } catch (vadErr) {
+        console.warn('VAD failed, processing full audio:', vadErr)
+      }
+
+      if (hasSpeech) {
+        lastSpeechTime = Date.now()
+        consecutiveSilentChunks = 0
+        if (currentChunkIntervalMs > CHUNK_INTERVAL_ACTIVE_MS) {
+          currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
+          restartChunkTimer()
+        }
+      }
+
+      const wavBuffer = pcmToWav(speechAudio, SAMPLE_RATE)
+      let sttResult: STTResult
+      if (currentSTTModel.startsWith('local:')) {
+        sttResult = await processWithLocalSTT(wavBuffer, currentSTTModel.replace('local:', ''), customVocabulary)
+      } else {
+        const text = await routeSTT(wavBuffer, currentSTTModel)
+        sttResult = { text, words: [] }
+      }
+
+      if (sttResult.text.trim()) {
+        lastSpeechTime = Date.now()
+        transcriptCallback({
+          speaker,
+          time: formatTimestamp(chunkStartSec),
+          text: sttResult.text.trim(),
+        })
+      }
+    } catch (err: any) {
+      console.error('STT processing error:', err)
+      if (transcriptCallback) {
+        transcriptCallback({
+          speaker: 'System',
+          time: formatTimestamp(elapsedSec),
+          text: `[STT Error: ${err.message}]`,
+        })
       }
     }
-
-    let sttResult: STTResult
-    const wavBuffer = pcmToWav(speechAudio, SAMPLE_RATE)
-
-    if (currentSTTModel.startsWith('local:')) {
-      sttResult = await processWithLocalSTT(wavBuffer, currentSTTModel.replace('local:', ''), customVocabulary)
-    } else {
-      const text = await routeSTT(wavBuffer, currentSTTModel)
-      sttResult = { text, words: [] }
-    }
-
-    if (!sttResult.text.trim()) {
-      return
-    }
-
-    lastSpeechTime = Date.now()
-
-    const timeStr = formatTimestamp(chunkStartSec)
-    transcriptCallback!({
-      speaker: 'You',
-      time: timeStr,
-      text: sttResult.text.trim(),
-    })
-
-  } catch (err: any) {
-    console.error('STT processing error:', err)
-    if (transcriptCallback) {
-      transcriptCallback({
-        speaker: 'System',
-        time: formatTimestamp(elapsedSec),
-        text: `[STT Error: ${err.message}]`,
-      })
-    }
-  } finally {
     isProcessing = false
   }
 }

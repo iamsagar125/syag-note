@@ -8,17 +8,22 @@ let currentMeeting: { title: string; startTime: number } | null = null
 let isRecording = false
 let titleUpdateInterval: ReturnType<typeof setInterval> | null = null
 
+// Colored tray icon (like Claude, Notion, ChatGPT) — visible in light and dark menu bar
+const TRAY_ICON_BG = '#9B7B4F'
+const TRAY_ICON_FG = '#FFFFFF'
+
 function createTrayIcon(): Electron.NativeImage {
   const size = 22
   const scale = 2
   const s = size * scale
+  const r = s * 0.22
 
   const svg = `<svg width="${s}" height="${s}" xmlns="http://www.w3.org/2000/svg">
-    <text x="${s / 2}" y="${s * 0.73}" font-family="SF Pro Display, Helvetica, Arial" font-size="${s * 0.7}" font-weight="700" text-anchor="middle" fill="black">S</text>
+    <rect width="${s}" height="${s}" rx="${r}" ry="${r}" fill="${TRAY_ICON_BG}"/>
+    <text x="${s / 2}" y="${s * 0.72}" font-family="SF Pro Display, -apple-system, sans-serif" font-size="${s * 0.58}" font-weight="700" text-anchor="middle" fill="${TRAY_ICON_FG}">S</text>
   </svg>`
 
   const img = nativeImage.createFromBuffer(Buffer.from(svg), { width: size, height: size, scaleFactor: scale })
-  img.setTemplateImage(true)
   return img
 }
 
@@ -26,10 +31,12 @@ function createRecordingIcon(): Electron.NativeImage {
   const size = 22
   const scale = 2
   const s = size * scale
+  const r = s * 0.22
 
   const svg = `<svg width="${s}" height="${s}" xmlns="http://www.w3.org/2000/svg">
-    <text x="${s * 0.4}" y="${s * 0.73}" font-family="SF Pro Display, Helvetica, Arial" font-size="${s * 0.65}" font-weight="700" text-anchor="middle" fill="black">S</text>
-    <circle cx="${s * 0.8}" cy="${s * 0.25}" r="${s * 0.12}" fill="red"/>
+    <rect width="${s}" height="${s}" rx="${r}" ry="${r}" fill="${TRAY_ICON_BG}"/>
+    <text x="${s * 0.42}" y="${s * 0.72}" font-family="SF Pro Display, -apple-system, sans-serif" font-size="${s * 0.5}" font-weight="700" text-anchor="middle" fill="${TRAY_ICON_FG}">S</text>
+    <circle cx="${s * 0.78}" cy="${s * 0.22}" r="${s * 0.14}" fill="#E53935"/>
   </svg>`
 
   const img = nativeImage.createFromBuffer(Buffer.from(svg), { width: size, height: size, scaleFactor: scale })

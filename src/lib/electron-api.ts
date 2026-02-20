@@ -46,7 +46,7 @@ type ElectronAPI = {
     stop: () => Promise<any>
     pause: () => Promise<boolean>
     resume: () => Promise<boolean>
-    sendAudioChunk: (pcmData: Float32Array) => Promise<boolean>
+    sendAudioChunk: (pcmData: Float32Array, channel?: number) => Promise<boolean>
     onTranscriptChunk: (callback: (chunk: TranscriptChunk) => void) => () => void
     onRecordingStatus: (callback: (status: { state: string; error?: string }) => void) => () => void
   }

@@ -59,6 +59,7 @@ export function registerIPCHandlers(): void {
   ipcMain.handle('db:settings-get-all', () => getAllSettings())
 
   // --- Models ---
+  const WHISPER_CPP_MODEL_IDS = ['whisper-large-v3-turbo', 'whisper-large-v3', 'whisper-medium', 'whisper-small', 'whisper-tiny']
   ipcMain.handle('models:download', async (_e, modelId: string) => {
     const sender = _e.sender
     try {
@@ -66,6 +67,12 @@ export function registerIPCHandlers(): void {
         sender.send('models:download-progress', progress)
       })
       sender.send('models:download-complete', { modelId, success: true })
+      // Auto-setup: after downloading a whisper.cpp model, ensure CLI binary is ready in background
+      if (WHISPER_CPP_MODEL_IDS.includes(modelId)) {
+        import('./models/stt-engine').then(({ ensureWhisperBinaryInBackground }) => {
+          ensureWhisperBinaryInBackground()
+        }).catch(() => {})
+      }
       return true
     } catch (err: any) {
       sender.send('models:download-complete', { modelId, success: false, error: err.message })
@@ -109,19 +116,18 @@ export function registerIPCHandlers(): void {
   ipcMain.handle('recording:stop', async () => { updateTrayRecordingState(false); return stopRecording() })
   ipcMain.handle('recording:pause', () => { pauseRecording(); updateTrayRecordingState(false); return true })
   ipcMain.handle('recording:resume', () => { resumeRecording(); updateTrayRecordingState(true); return true })
-  ipcMain.handle('recording:audio-chunk', async (_e, pcmData: any) => {
+  ipcMain.handle('recording:audio-chunk', async (_e, pcmData: any, channel?: number) => {
     let data: Float32Array
     if (pcmData instanceof Float32Array) {
       data = pcmData
     } else if (pcmData?.buffer instanceof ArrayBuffer) {
-      // Typed array from a different context (e.g. after contextBridge serialization)
       data = new Float32Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 4)
     } else if (ArrayBuffer.isView(pcmData)) {
       data = new Float32Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 4)
     } else {
       data = new Float32Array(pcmData)
     }
-    return processAudioChunk(data)
+    return processAudioChunk(data, channel ?? 0)
   })
 
   // --- LLM ---

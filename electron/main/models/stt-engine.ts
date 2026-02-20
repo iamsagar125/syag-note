@@ -83,7 +83,7 @@ function findWhisperBinary(): string | null {
   return null
 }
 
-async function ensureWhisperBinary(): Promise<string> {
+export async function ensureWhisperBinary(): Promise<string> {
   const existing = findWhisperBinary()
   if (existing) return existing
 
@@ -107,6 +107,13 @@ async function ensureWhisperBinary(): Promise<string> {
   } finally {
     isInstallingBinary = false
   }
+}
+
+/** Fire-and-forget: ensure whisper CLI is ready (e.g. after downloading a whisper model). */
+export function ensureWhisperBinaryInBackground(): void {
+  ensureWhisperBinary()
+    .then(() => console.log('[STT] Whisper CLI ready'))
+    .catch((err) => console.warn('[STT] Whisper CLI setup failed:', err.message))
 }
 
 async function tryBuildFromSource(): Promise<string | null> {
@@ -441,13 +448,26 @@ export async function checkMLXWhisperAvailable(): Promise<boolean> {
 }
 
 export async function installMLXWhisper(): Promise<boolean> {
-  try {
-    execSync('pip3 install mlx-whisper', { stdio: 'pipe', timeout: 300000 })
-    mlxWhisperAvailable = true
-    return true
-  } catch {
-    return false
-  }
+  return new Promise<boolean>((resolve) => {
+    const proc = spawn('python3', ['-m', 'pip', 'install', 'mlx-whisper'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stderr = ''
+    proc.stderr?.on('data', (d) => { stderr += d.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) {
+        mlxWhisperAvailable = true
+        resolve(true)
+      } else {
+        console.warn('[MLX] pip install failed:', code, stderr.slice(-500))
+        resolve(false)
+      }
+    })
+    proc.on('error', (err) => {
+      console.warn('[MLX] pip spawn error:', err.message)
+      resolve(false)
+    })
+  })
 }
 
 async function processWithMLXWhisper(wavBuffer: Buffer, customVocabulary?: string): Promise<STTResult> {

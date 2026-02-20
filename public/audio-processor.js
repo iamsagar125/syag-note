@@ -1,13 +1,13 @@
 /**
- * AudioWorklet processor for capturing audio from MediaStreams.
- * Collects PCM samples and sends them to the main thread in chunks.
+ * AudioWorklet processor: captures mic (channel 0) and system (channel 1) separately
+ * for "You" vs "Others" diarization. Sends chunks with channel index.
  */
 class SyagAudioProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
     this._bufferSize = 4096
-    this._buffer = new Float32Array(this._bufferSize)
-    this._writeIndex = 0
+    this._buffers = [new Float32Array(this._bufferSize), new Float32Array(this._bufferSize)]
+    this._writeIndex = [0, 0]
     this._active = true
 
     this.port.onmessage = (event) => {
@@ -23,18 +23,24 @@ class SyagAudioProcessor extends AudioWorkletProcessor {
     const input = inputs[0]
     if (!input || input.length === 0) return true
 
-    const channelData = input[0]
-    if (!channelData) return true
+    for (let ch = 0; ch < Math.min(2, input.length); ch++) {
+      const channelData = input[ch]
+      if (!channelData) continue
 
-    for (let i = 0; i < channelData.length; i++) {
-      this._buffer[this._writeIndex++] = channelData[i]
-      if (this._writeIndex >= this._bufferSize) {
-        this.port.postMessage({
-          type: 'audio-chunk',
-          pcm: this._buffer.slice()
-        })
-        this._writeIndex = 0
+      const buf = this._buffers[ch]
+      let wi = this._writeIndex[ch]
+      for (let i = 0; i < channelData.length; i++) {
+        buf[wi++] = channelData[i]
+        if (wi >= this._bufferSize) {
+          this.port.postMessage({
+            type: 'audio-chunk',
+            pcm: buf.slice(),
+            channel: ch
+          })
+          wi = 0
+        }
       }
+      this._writeIndex[ch] = wi
     }
 
     return true

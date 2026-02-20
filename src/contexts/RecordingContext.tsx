@@ -200,7 +200,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
       worklet.port.onmessage = (event) => {
         if (event.data.type === 'audio-chunk') {
-          api.recording.sendAudioChunk(event.data.pcm);
+          const channel = event.data.channel !== undefined ? event.data.channel : 0;
+          api.recording.sendAudioChunk(event.data.pcm, channel);
         }
       };
 
