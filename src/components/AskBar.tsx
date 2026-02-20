@@ -1,11 +1,13 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { ArrowUp, X, FileText, Play, Eye, EyeOff, Sparkles, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
+import { getElectronAPI, isElectron } from "@/lib/electron-api";
 
 interface AskBarProps {
   context?: "home" | "meeting";
   meetingTitle?: string;
+  noteContext?: string;
   leftSlot?: React.ReactNode;
   onResumeRecording?: () => void;
   onPauseRecording?: () => void;
@@ -18,13 +20,15 @@ interface AskBarProps {
   elapsed?: string;
 }
 
-export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecording, onPauseRecording, onGenerateNotes, onToggleTranscript, transcriptVisible, recordingState, isSummarizing, hasSummary, elapsed }: AskBarProps) {
-  const { getActiveAIModelLabel } = useModelSettings();
+export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, onResumeRecording, onPauseRecording, onGenerateNotes, onToggleTranscript, transcriptVisible, recordingState, isSummarizing, hasSummary, elapsed }: AskBarProps) {
+  const { getActiveAIModelLabel, selectedAIModel } = useModelSettings();
+  const api = getElectronAPI();
 
   const [input, setInput] = useState("");
   const [showChat, setShowChat] = useState(false);
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
   const [isActive, setIsActive] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -36,9 +40,10 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
     const handleClickOutside = (e: MouseEvent) => {
       if (barRef.current && !barRef.current.contains(e.target as Node)) {
         setIsActive(false);
-        setShowChat(false);
-        setMessages([]);
-        setInput("");
+        if (!showChat) {
+          setMessages([]);
+          setInput("");
+        }
       }
     };
     if (isActive || showChat) {
@@ -51,18 +56,55 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = useCallback(async () => {
     if (!input.trim()) return;
     const q = input;
-    const modelLabel = getActiveAIModelLabel();
     setInput("");
     setShowChat(true);
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", text: q },
-      { role: "assistant", text: `[${modelLabel}] Here's what I found${context === "meeting" ? ` from "${meetingTitle}"` : " across your notes"}: Simulated response to "${q}".` },
-    ]);
-  };
+
+    const userMsg = { role: "user" as const, text: q };
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
+
+    if (api && selectedAIModel) {
+      try {
+        const chatMessages = [...messages, userMsg].map(m => ({
+          role: m.role,
+          content: m.text,
+        }));
+
+        const contextData = noteContext
+          ? { notes: noteContext }
+          : undefined;
+
+        const response = await api.llm.chat({
+          messages: chatMessages,
+          context: contextData,
+          model: selectedAIModel,
+        });
+
+        if (response) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", text: response },
+          ]);
+        }
+      } catch (err: any) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", text: `Error: ${err.message || 'Failed to get response. Check your AI model in Settings.'}` },
+        ]);
+      }
+    } else {
+      const modelLabel = getActiveAIModelLabel();
+      await new Promise(r => setTimeout(r, 500));
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: `[${modelLabel || 'No model'}] Connect an AI model in Settings to ask questions about your notes.` },
+      ]);
+    }
+    setIsLoading(false);
+  }, [input, messages, api, selectedAIModel, noteContext, getActiveAIModelLabel]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -92,7 +134,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
   return (
     <div ref={barRef} className="px-4 pb-4 pointer-events-none relative">
       <div className="mx-auto max-w-md pointer-events-auto">
-        {/* Floating chat panel */}
         {showChat && messages.length > 0 && (
           <div className="absolute bottom-full left-4 right-4 mb-2 mx-auto max-w-md">
             <div className="rounded-2xl border border-border bg-card shadow-xl overflow-hidden">
@@ -125,16 +166,21 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
                     </div>
                   </div>
                 ))}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-secondary rounded-xl px-3 py-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* Bar row with controls */}
         <div className="flex items-center gap-2">
           {leftSlot}
 
-          {/* Recording controls -- active meeting */}
           {context === "meeting" && recordingState && recordingState !== "stopped" && (
             <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
@@ -145,7 +191,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
                 {transcriptVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </button>
 
-              {/* "Generate notes" button -- shown when paused and no notes yet */}
               {showGenerateButton && (
                 <button
                   onClick={onGenerateNotes}
@@ -156,7 +201,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
                 </button>
               )}
 
-              {/* Generating state */}
               {showGeneratingState && (
                 <div className="flex items-center gap-1.5 rounded-full border border-border bg-card shadow-lg px-3.5 py-2.5 text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -164,7 +208,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
                 </div>
               )}
 
-              {/* Pause / Resume toggle with timer */}
               <button
                 onClick={recordingState === "recording" ? onPauseRecording : onResumeRecording}
                 className={cn(
@@ -202,7 +245,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
             </div>
           )}
 
-          {/* Stopped -- meeting ended, only transcript toggle */}
           {context === "meeting" && recordingState === "stopped" && (
             <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
@@ -215,7 +257,6 @@ export function AskBar({ context = "home", meetingTitle, leftSlot, onResumeRecor
             </div>
           )}
 
-          {/* The pill bar */}
           <div
             onClick={handleBarClick}
             className="flex flex-1 items-center rounded-full border border-border bg-card shadow-lg px-4 py-2.5 cursor-text"

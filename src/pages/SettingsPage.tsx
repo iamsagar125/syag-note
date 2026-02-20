@@ -1,7 +1,7 @@
 import {
   User, Mic, Globe, Calendar, Bell, Sparkles, Brain, Download,
   ChevronRight, Check, ExternalLink, Plus, Trash2, RefreshCw, HardDrive, Cloud,
-  Volume2, Save, Sliders, Monitor, Sun, Moon
+  Volume2, Save, Sliders, Monitor, Sun, Moon, FileText, ChevronDown, ChevronUp
 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ const sections = [
   { icon: Sliders, label: "Preferences", id: "preferences" },
   { icon: Sparkles, label: "AI Models", id: "ai-models" },
   { icon: Mic, label: "Transcription", id: "transcription" },
+  { icon: FileText, label: "Templates", id: "templates" },
   { icon: Calendar, label: "Calendar", id: "calendar" },
   { icon: Bell, label: "Notifications", id: "notifications" },
   { icon: Globe, label: "Integrations", id: "integrations" },
@@ -194,6 +195,199 @@ function AccountSection() {
   );
 }
 
+
+const BUILTIN_TEMPLATES = [
+  { id: "general", name: "General Meeting", icon: "📋" },
+  { id: "standup", name: "Standup / Daily", icon: "🏃" },
+  { id: "one-on-one", name: "1:1 Meeting", icon: "🤝" },
+  { id: "brainstorm", name: "Brainstorm", icon: "💡" },
+  { id: "customer-call", name: "Customer Call", icon: "📞" },
+  { id: "interview", name: "Interview", icon: "🎯" },
+  { id: "retrospective", name: "Retrospective", icon: "🔄" },
+];
+
+function TemplatesSection() {
+  const api = getElectronAPI();
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [prompts, setPrompts] = useState<Record<string, string>>({});
+  const [customTemplates, setCustomTemplates] = useState<Array<{ id: string; name: string; prompt: string }>>([]);
+  const [newName, setNewName] = useState("");
+  const [saving, setSaving] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!api) return;
+    BUILTIN_TEMPLATES.forEach((t) => {
+      api.db.settings.get(`template-prompt-${t.id}`).then((val: string | null) => {
+        if (val) setPrompts((prev) => ({ ...prev, [t.id]: val }));
+      });
+    });
+    api.db.settings.get("custom-templates").then((val: string | null) => {
+      if (val) {
+        try { setCustomTemplates(JSON.parse(val)); } catch {}
+      }
+    });
+  }, []);
+
+  const savePrompt = async (templateId: string, prompt: string) => {
+    setSaving(templateId);
+    setPrompts((prev) => ({ ...prev, [templateId]: prompt }));
+    if (api) {
+      await api.db.settings.set(`template-prompt-${templateId}`, prompt);
+    }
+    setTimeout(() => setSaving(null), 1000);
+  };
+
+  const addCustomTemplate = () => {
+    if (!newName.trim()) return;
+    const id = `custom-${Date.now()}`;
+    const updated = [...customTemplates, { id, name: newName.trim(), prompt: "" }];
+    setCustomTemplates(updated);
+    setNewName("");
+    setExpandedId(id);
+    if (api) api.db.settings.set("custom-templates", JSON.stringify(updated));
+  };
+
+  const updateCustomTemplate = (id: string, field: "name" | "prompt", value: string) => {
+    const updated = customTemplates.map((t) => (t.id === id ? { ...t, [field]: value } : t));
+    setCustomTemplates(updated);
+    if (api) {
+      api.db.settings.set("custom-templates", JSON.stringify(updated));
+      if (field === "prompt") {
+        api.db.settings.set(`template-prompt-${id}`, value);
+      }
+    }
+  };
+
+  const deleteCustomTemplate = (id: string) => {
+    const updated = customTemplates.filter((t) => t.id !== id);
+    setCustomTemplates(updated);
+    if (api) api.db.settings.set("custom-templates", JSON.stringify(updated));
+  };
+
+  return (
+    <div className="space-y-5">
+      <SectionHeader title="Note Templates" description="Customize the prompts used to generate meeting notes for each template type" />
+
+      <div className="space-y-2">
+        <h3 className="text-[13px] font-medium text-foreground">Built-in Templates</h3>
+        {BUILTIN_TEMPLATES.map((t) => {
+          const isExpanded = expandedId === t.id;
+          return (
+            <div key={t.id} className="rounded-md border border-border bg-card overflow-hidden">
+              <button
+                onClick={() => setExpandedId(isExpanded ? null : t.id)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-secondary/50 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <span>{t.icon}</span>
+                  <span className="text-[13px] font-medium text-foreground">{t.name}</span>
+                  {prompts[t.id] && <span className="text-[10px] text-accent px-1.5 py-0.5 rounded-full bg-accent/10">customized</span>}
+                </div>
+                {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+              </button>
+              {isExpanded && (
+                <div className="px-3 pb-3 border-t border-border">
+                  <p className="text-[11px] text-muted-foreground mt-2 mb-1.5">
+                    Custom instructions appended to this template's prompt. Leave empty to use the default.
+                  </p>
+                  <textarea
+                    value={prompts[t.id] || ""}
+                    onChange={(e) => setPrompts((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                    placeholder="e.g., Always include a 'Next Steps' section with deadlines..."
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 resize-none"
+                    rows={4}
+                  />
+                  <div className="flex items-center justify-between mt-2">
+                    {prompts[t.id] && (
+                      <button
+                        onClick={() => savePrompt(t.id, "")}
+                        className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        Reset to default
+                      </button>
+                    )}
+                    <button
+                      onClick={() => savePrompt(t.id, prompts[t.id] || "")}
+                      className="ml-auto flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-accent-foreground hover:opacity-90 transition-opacity"
+                    >
+                      {saving === t.id ? <Check className="h-3 w-3" /> : <Save className="h-3 w-3" />}
+                      {saving === t.id ? "Saved" : "Save"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-[13px] font-medium text-foreground">Custom Templates</h3>
+        {customTemplates.map((ct) => {
+          const isExpanded = expandedId === ct.id;
+          return (
+            <div key={ct.id} className="rounded-md border border-border bg-card overflow-hidden">
+              <button
+                onClick={() => setExpandedId(isExpanded ? null : ct.id)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-secondary/50 transition-colors"
+              >
+                <span className="text-[13px] font-medium text-foreground">{ct.name}</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); deleteCustomTemplate(ct.id); }}
+                    className="rounded p-1 text-muted-foreground hover:text-red-500 transition-colors"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                  {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+                </div>
+              </button>
+              {isExpanded && (
+                <div className="px-3 pb-3 border-t border-border space-y-2">
+                  <div className="mt-2">
+                    <label className="text-[11px] text-muted-foreground">Template name</label>
+                    <input
+                      value={ct.name}
+                      onChange={(e) => updateCustomTemplate(ct.id, "name", e.target.value)}
+                      className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-[13px] text-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-muted-foreground">Custom prompt</label>
+                    <textarea
+                      value={ct.prompt}
+                      onChange={(e) => updateCustomTemplate(ct.id, "prompt", e.target.value)}
+                      placeholder="Describe how notes should be structured for this type of meeting..."
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/20 resize-none mt-1"
+                      rows={5}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <div className="flex gap-2 mt-2">
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addCustomTemplate()}
+            placeholder="New template name..."
+            className="flex-1 rounded-md border border-border bg-card px-3 py-1.5 text-[13px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
+          />
+          <button
+            onClick={addCustomTemplate}
+            disabled={!newName.trim()}
+            className="flex items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-[12px] text-foreground hover:bg-secondary transition-colors disabled:opacity-40"
+          >
+            <Plus className="h-3 w-3" />
+            Add
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const modelSettings = useModelSettings();
@@ -699,6 +893,10 @@ export default function SettingsPage() {
                     </select>
                   </div>
                 </div>
+              )}
+
+              {active === "templates" && (
+                <TemplatesSection />
               )}
 
               {active === "calendar" && (

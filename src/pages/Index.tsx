@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteCardMenu } from "@/components/NoteCardMenu";
 import { Plus, FolderOpen, ArrowLeft, FileText, Calendar, Link2 } from "lucide-react";
@@ -33,8 +33,16 @@ const Index = () => {
     return acc;
   }, {});
 
-  // Folder-filtered notes
   const folderNotes = activeFolderId ? notes.filter((n) => n.folderId === activeFolderId) : [];
+
+  const homeNoteContext = useMemo(() => {
+    return notes.slice(0, 10).map(n => {
+      const parts = [`Title: ${n.title} (${n.date})`];
+      if (n.summary?.overview) parts.push(`Summary: ${n.summary.overview}`);
+      if (n.personalNotes) parts.push(`Notes: ${n.personalNotes.slice(0, 200)}`);
+      return parts.join('\n');
+    }).join('\n\n');
+  }, [notes]);
 
   // Folder view
   if (activeFolder) {
@@ -92,7 +100,7 @@ const Index = () => {
             </div>
           </div>
           <div className="absolute bottom-0 left-0 right-0">
-            <AskBar context="home" />
+            <AskBar context="home" noteContext={homeNoteContext} />
           </div>
         </main>
       </div>
@@ -220,7 +228,7 @@ const Index = () => {
         </div>
 
         <div className="absolute bottom-0 left-0 right-0">
-          <AskBar context="home" />
+          <AskBar context="home" noteContext={homeNoteContext} />
         </div>
       </main>
       <ICSDialog open={icsOpen} onOpenChange={setIcsOpen} />

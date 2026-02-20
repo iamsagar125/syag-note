@@ -27,6 +27,7 @@ export type LocalModel = {
 };
 
 export const localModels: LocalModel[] = [
+  { id: "mlx-whisper-large-v3-turbo", name: "MLX Whisper Large V3 Turbo", size: "~3 GB", type: "stt", description: "Best quality — uses Apple Neural Engine, requires pip3 install mlx-whisper" },
   { id: "whisper-large-v3-turbo", name: "Whisper Large V3 Turbo", size: "1.6 GB", type: "stt", description: "Recommended — Nova-2 quality, 4x faster than Large V3" },
   { id: "whisper-large-v3", name: "Whisper Large V3", size: "3.1 GB", type: "stt", description: "Best accuracy, slower" },
   { id: "whisper-medium", name: "Whisper Medium", size: "1.5 GB", type: "stt", description: "Good balance of speed and accuracy" },
@@ -181,7 +182,16 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Auto-select first available STT model when none is configured
+  // Check if MLX Whisper is installed on mount
+  useEffect(() => {
+    if (!api) return;
+    api.models.checkMLXWhisper().then((available: boolean) => {
+      if (available) {
+        setDownloadStates((prev) => ({ ...prev, 'mlx-whisper-large-v3-turbo': 'downloaded' }));
+      }
+    }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (selectedSTTModel) return;
     const downloadedSTT = localModels.filter(m => m.type === 'stt' && downloadStates[m.id] === 'downloaded');
@@ -199,8 +209,23 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
     }
   }, [selectedAIModel, selectedSTTModel, useLocalModels, downloadStates, connectedProviders]);
 
-  const handleDownload = useCallback((modelId: string) => {
+  const handleDownload = useCallback(async (modelId: string) => {
     setDownloadStates((prev) => ({ ...prev, [modelId]: "downloading" }));
+
+    if (modelId === 'mlx-whisper-large-v3-turbo' && api) {
+      try {
+        const success = await api.models.installMLXWhisper();
+        if (success) {
+          setDownloadStates((prev) => ({ ...prev, [modelId]: "downloaded" }));
+        } else {
+          setDownloadStates((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
+        }
+      } catch (err) {
+        console.error('MLX Whisper install failed:', err);
+        setDownloadStates((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
+      }
+      return;
+    }
 
     if (api) {
       api.models.download(modelId).catch((err) => {
@@ -212,7 +237,6 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
         });
       });
     } else {
-      // Web fallback: simulate download
       setTimeout(() => {
         setDownloadStates((prev) => ({ ...prev, [modelId]: "downloaded" }));
       }, 3000);

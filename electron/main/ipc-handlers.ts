@@ -1,4 +1,6 @@
 import { ipcMain, systemPreferences, desktopCapturer, app, safeStorage, BrowserWindow } from 'electron'
+import { updateTrayRecordingState, updateTrayMeetingInfo } from './tray'
+import { setCalendarEvents } from './meeting-detector'
 import {
   getAllNotes, getNote, addNote, updateNote, deleteNote, updateNoteFolder,
   getAllFolders, addFolder, updateFolder, deleteFolder,
@@ -73,18 +75,40 @@ export function registerIPCHandlers(): void {
   ipcMain.handle('models:cancel-download', (_e, modelId: string) => { cancelDownload(modelId); return true })
   ipcMain.handle('models:delete', (_e, modelId: string) => { deleteModel(modelId); return true })
   ipcMain.handle('models:list', () => listDownloadedModels())
+  ipcMain.handle('models:check-mlx-whisper', async () => {
+    const { checkMLXWhisperAvailable } = await import('./models/stt-engine')
+    return checkMLXWhisperAvailable()
+  })
+  ipcMain.handle('models:install-mlx-whisper', async () => {
+    const { installMLXWhisper } = await import('./models/stt-engine')
+    return installMLXWhisper()
+  })
+  // --- Tray / Meeting ---
+  ipcMain.handle('tray:update-recording', (_e, isRecording: boolean) => {
+    updateTrayRecordingState(isRecording)
+  })
+  ipcMain.handle('tray:update-meeting-info', (_e, info: { title: string; startTime: number } | null) => {
+    updateTrayMeetingInfo(info)
+  })
+  ipcMain.handle('meeting:set-calendar-events', (_e, events: Array<{ title: string; start: number; end: number }>) => {
+    setCalendarEvents(events)
+    return true
+  })
+
   // --- Recording ---
+
   ipcMain.handle('recording:start', async (_e, options: any) => {
     const sender = _e.sender
+    updateTrayRecordingState(true)
     return startRecording(
       options,
       (chunk) => { sender.send('recording:transcript-chunk', chunk) },
       (status) => { sender.send('recording:status', status) }
     )
   })
-  ipcMain.handle('recording:stop', async () => stopRecording())
-  ipcMain.handle('recording:pause', () => { pauseRecording(); return true })
-  ipcMain.handle('recording:resume', () => { resumeRecording(); return true })
+  ipcMain.handle('recording:stop', async () => { updateTrayRecordingState(false); return stopRecording() })
+  ipcMain.handle('recording:pause', () => { pauseRecording(); updateTrayRecordingState(false); return true })
+  ipcMain.handle('recording:resume', () => { resumeRecording(); updateTrayRecordingState(true); return true })
   ipcMain.handle('recording:audio-chunk', async (_e, pcmData: any) => {
     let data: Float32Array
     if (pcmData instanceof Float32Array) {
@@ -102,7 +126,7 @@ export function registerIPCHandlers(): void {
 
   // --- LLM ---
   ipcMain.handle('llm:summarize', async (_e, data: any) => {
-    return summarize(data.transcript, data.personalNotes, data.model, data.meetingTemplateId)
+    return summarize(data.transcript, data.personalNotes, data.model, data.meetingTemplateId, data.customPrompt)
   })
   ipcMain.handle('llm:chat', async (_e, data: any) => {
     const sender = _e.sender

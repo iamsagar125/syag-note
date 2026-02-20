@@ -2,6 +2,7 @@ import { useState } from "react";
 import { FileText, Search, Settings, Sparkles, FolderOpen, Users, Briefcase, Star, Archive, Plus, X, Check, Home, Trash2 } from "lucide-react";
 import { SyagLogo } from "@/components/SyagLogo";
 import { cn } from "@/lib/utils";
+import { isElectron } from "@/lib/electron-api";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useFolders, type Folder } from "@/contexts/FolderContext";
 
@@ -34,7 +35,7 @@ export function Sidebar() {
   return (
     <aside className="flex h-screen w-56 flex-shrink-0 flex-col bg-sidebar">
       {/* Logo */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-2">
+      <div className={cn("flex items-center gap-2 px-4 pb-2", isElectron ? "pt-10" : "pt-4")}>
         <SyagLogo size={24} showText />
       </div>
 

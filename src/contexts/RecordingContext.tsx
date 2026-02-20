@@ -6,12 +6,14 @@ interface RecordingSession {
   title: string;
   elapsedSeconds: number;
   isRecording: boolean;
+  startTime: number; // Date.now() when recording started
 }
 
 type TranscriptLine = { speaker: string; time: string; text: string };
 
 interface RecordingContextType {
   activeSession: RecordingSession | null;
+  isActive: boolean;
   startSession: (noteId: string) => void;
   updateSession: (updates: Partial<RecordingSession>) => void;
   clearSession: () => void;
@@ -74,17 +76,33 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   }, [activeSession?.isRecording]);
 
   const startSession = useCallback((noteId: string) => {
-    setActiveSession({ noteId, title: "New note", elapsedSeconds: 0, isRecording: true });
+    const now = Date.now();
+    setActiveSession({ noteId, title: "New note", elapsedSeconds: 0, isRecording: true, startTime: now });
     setTranscriptLines([]);
-  }, []);
+    // Inform tray about meeting info
+    if (api) {
+      api.app.updateTrayMeetingInfo?.({ title: "New note", startTime: now });
+    }
+  }, [api]);
 
   const updateSession = useCallback((updates: Partial<RecordingSession>) => {
-    setActiveSession((prev) => prev ? { ...prev, ...updates } : null);
-  }, []);
+    setActiveSession((prev) => {
+      if (!prev) return null;
+      const next = { ...prev, ...updates };
+      // Sync title changes to tray
+      if (updates.title && api) {
+        api.app.updateTrayMeetingInfo?.({ title: next.title, startTime: next.startTime });
+      }
+      return next;
+    });
+  }, [api]);
 
   const clearSession = useCallback(() => {
     setActiveSession(null);
-  }, []);
+    if (api) {
+      api.app.updateTrayMeetingInfo?.(null);
+    }
+  }, [api]);
 
   // Keep elapsed ref in sync for Web Speech API callback
   useEffect(() => {
@@ -305,9 +323,11 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     }
   }, [api, stopSpeechRecognition]);
 
+  const isActive = !!activeSession;
+
   return (
     <RecordingContext.Provider value={{
-      activeSession, startSession, updateSession, clearSession,
+      activeSession, isActive, startSession, updateSession, clearSession,
       transcriptLines, isCapturing, usingWebSpeech,
       startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture
     }}>

@@ -215,6 +215,12 @@ export default function NoteDetailPage() {
               <AskBar
                 context="meeting"
                 meetingTitle={note.title}
+                noteContext={[
+                  `Title: ${note.title}`,
+                  note.personalNotes ? `Personal Notes: ${note.personalNotes}` : '',
+                  note.summary?.overview ? `Overview: ${note.summary.overview}` : '',
+                  note.transcript?.length ? `Transcript:\n${note.transcript.map((t: any) => `[${t.time}] ${t.speaker}: ${t.text}`).join('\n')}` : '',
+                ].filter(Boolean).join('\n\n')}
                 recordingState={recordingState}
                 elapsed={recordingState !== "stopped" ? formatElapsed(elapsed) : undefined}
                 transcriptVisible={transcriptVisible}

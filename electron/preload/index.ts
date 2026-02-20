@@ -52,6 +52,8 @@ const electronAPI = {
       ipcRenderer.on('models:download-complete', handler)
       return () => ipcRenderer.removeListener('models:download-complete', handler)
     },
+    checkMLXWhisper: () => ipcRenderer.invoke('models:check-mlx-whisper'),
+    installMLXWhisper: () => ipcRenderer.invoke('models:install-mlx-whisper'),
   },
 
   recording: {
@@ -111,6 +113,37 @@ const electronAPI = {
     onTrayStartRecording: (callback: () => void) => {
       ipcRenderer.on('tray:start-recording', callback)
       return () => ipcRenderer.removeListener('tray:start-recording', callback)
+    },
+    onTrayStopRecording: (callback: () => void) => {
+      ipcRenderer.on('tray:stop-recording', callback)
+      return () => ipcRenderer.removeListener('tray:stop-recording', callback)
+    },
+    onMeetingDetected: (callback: (data: { app: string; title?: string; startTime?: number; calendarEvent?: any }) => void) => {
+      const handler = (_event: any, data: any) => callback(data)
+      ipcRenderer.on('meeting:detected', handler)
+      return () => ipcRenderer.removeListener('meeting:detected', handler)
+    },
+    onMeetingEnded: (callback: (data: { app: string }) => void) => {
+      const handler = (_event: any, data: { app: string }) => callback(data)
+      ipcRenderer.on('meeting:ended', handler)
+      return () => ipcRenderer.removeListener('meeting:ended', handler)
+    },
+    onTrayNavigateToMeeting: (callback: () => void) => {
+      ipcRenderer.on('tray:navigate-to-meeting', callback)
+      return () => ipcRenderer.removeListener('tray:navigate-to-meeting', callback)
+    },
+    onTrayPauseRecording: (callback: () => void) => {
+      ipcRenderer.on('tray:pause-recording', callback)
+      return () => ipcRenderer.removeListener('tray:pause-recording', callback)
+    },
+    setCalendarEvents: (events: Array<{ title: string; start: number; end: number }>) =>
+      ipcRenderer.invoke('meeting:set-calendar-events', events),
+    updateTrayMeetingInfo: (info: { title: string; startTime: number } | null) =>
+      ipcRenderer.invoke('tray:update-meeting-info', info),
+    onPowerModeChanged: (callback: (data: { onBattery: boolean }) => void) => {
+      const handler = (_event: any, data: { onBattery: boolean }) => callback(data)
+      ipcRenderer.on('power:mode-changed', handler)
+      return () => ipcRenderer.removeListener('power:mode-changed', handler)
     },
   },
 }

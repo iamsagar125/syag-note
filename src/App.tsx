@@ -2,8 +2,10 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, HashRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
-import { isElectron } from "@/lib/electron-api";
+import { BrowserRouter, HashRouter, Routes, Route, useLocation, useNavigate, Navigate } from "react-router-dom";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
+import { useEffect } from "react";
+import { useRecording } from "@/contexts/RecordingContext";
 import { ModelSettingsProvider } from "@/contexts/ModelSettingsContext";
 import { FolderProvider } from "@/contexts/FolderContext";
 import { NotesProvider } from "@/contexts/NotesContext";
@@ -23,6 +25,7 @@ import NoteDetailPage from "./pages/NoteDetailPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import NotFound from "./pages/NotFound";
 import { TrayMenu } from "@/components/TrayMenu";
+import { MeetingDetectionHandler } from "@/components/MeetingDetectionHandler";
 
 const queryClient = new QueryClient();
 
@@ -37,6 +40,33 @@ if (initialPrefs.appearance === "system") {
   });
 }
 
+function TrayNavigationHandler() {
+  const api = getElectronAPI();
+  const navigate = useNavigate();
+  const { activeSession, pauseAudioCapture } = useRecording();
+
+  useEffect(() => {
+    if (!api) return;
+
+    const cleanupNav = api.app.onTrayNavigateToMeeting?.(() => {
+      if (activeSession?.noteId) {
+        navigate(`/new-note?session=${activeSession.noteId}`);
+      }
+    });
+
+    const cleanupPause = api.app.onTrayPauseRecording?.(() => {
+      pauseAudioCapture();
+    });
+
+    return () => {
+      cleanupNav?.();
+      cleanupPause?.();
+    };
+  }, [api, activeSession?.noteId, navigate, pauseAudioCapture]);
+
+  return null;
+}
+
 function AppContent() {
   const location = useLocation();
   const isOnRecordingPage = location.pathname === "/new-note";
@@ -49,6 +79,8 @@ function AppContent() {
   return (
     <>
       {!isOnRecordingPage && <GlobalRecordingBanner />}
+      <MeetingDetectionHandler />
+      <TrayNavigationHandler />
       <Routes>
         <Route path="/onboarding" element={<OnboardingPage />} />
         <Route path="/" element={<Index />} />

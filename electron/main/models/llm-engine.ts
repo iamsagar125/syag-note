@@ -4,84 +4,66 @@ import { getTemplate, detectMeetingType, type MeetingSummary, type MeetingTempla
 
 // ─── Two-Pass Summarization Prompts ─────────────────────────────────────────
 
-const EXTRACTION_SYSTEM_PROMPT = `You are an expert meeting analyst. Extract structured information from the transcript and personal notes.
+const EXTRACTION_SYSTEM_PROMPT = `Extract structured data from this meeting. Output valid JSON only.
 
-Output valid JSON with these fields:
 {
-  "attendees": ["speaker labels as they appear"],
+  "attendees": ["names/labels"],
   "topics": [
-    {
-      "name": "Actual subject discussed (specific, not generic)",
-      "points": ["key point or statement"],
-      "decisions": ["any decision made about this topic"],
-      "speakers": ["who participated"]
-    }
+    {"name": "Specific subject (not generic)", "points": ["fact or statement"], "decisions": ["what was decided"], "speakers": ["who"]}
   ],
   "action_items": [
-    {
-      "task": "specific task",
-      "owner": "who (speaker label or 'You' from personal notes)",
-      "deadline": "if mentioned, else null",
-      "priority": "high|medium|low"
-    }
+    {"task": "what", "owner": "who", "deadline": "when or null", "priority": "high|medium|low"}
   ],
-  "unresolved": ["unanswered questions or open items"],
-  "notable_quotes": [{"speaker": "who", "text": "what they said"}]
+  "unresolved": ["open question"],
+  "notable_quotes": [{"speaker": "who", "text": "exact words"}]
 }
 
 RULES:
-- Topic names must be SPECIFIC (e.g. "Q3 Launch Timeline", not "Updates")
-- Extract implicit action items: "I'll send that over" = action item
-- Extract implicit decisions: "Let's go with option A" = decision under that topic
-- Include personal notes context where relevant
-- Be thorough — extract everything, synthesis will filter
+- Topic names: SPECIFIC ("Q3 Launch Timeline", not "Updates" or "Discussion")
+- Extract implicit actions: "I'll send that" = action item for that speaker
+- Extract implicit decisions: "Let's go with A" = decision under that topic
+- Merge personal notes into relevant topics
+- Be thorough but factual — no interpretation
 
 Valid JSON only.`
 
-function buildSynthesisSystemPrompt(template: MeetingTemplate): string {
-  return `You are Syag, a meeting note synthesizer. Produce clean, topic-first notes organized by TOPIC.
+function buildSynthesisSystemPrompt(template: MeetingTemplate, customPrompt?: string): string {
+  const templateInstructions = customPrompt || template.additionalPrompt || ''
+  return `You are Syag, a concise meeting note writer. Output valid JSON only.
 
-OUTPUT FORMAT (valid JSON only):
 {
   "title": "5-8 word title",
   "meetingType": "${template.id}",
-  "attendees": ["Speaker 1", "Speaker 2"],
-  "overview": "One sentence. What this meeting was about.",
+  "attendees": ["Name"],
+  "overview": "One sentence of context.",
   "discussionTopics": [
-    {
-      "topic": "Specific Topic Name",
-      "summary": "- Bullet point 1\\n- Bullet point 2\\n- Decision: what was decided",
-      "speakers": ["Speaker 1"]
-    }
+    {"topic": "Specific Name", "summary": "- Point 1\\n- Point 2\\n- Decision: X", "speakers": ["Name"]}
   ],
   "actionItems": [
-    {
-      "text": "Task description",
-      "assignee": "Who",
-      "dueDate": "when or null",
-      "priority": "high|medium|low",
-      "done": false
-    }
+    {"text": "Task — Person", "assignee": "Person", "dueDate": "when or null", "priority": "high|medium|low", "done": false}
   ],
-  "questionsAndOpenItems": ["Unresolved question"],
-  "keyQuotes": [{"speaker": "Who", "text": "Quote"}]
+  "questionsAndOpenItems": ["Open question"]
 }
 
-NOTE FORMAT RULES:
-- The notes are TOPIC-FIRST. Each discussionTopic is a section heading with bullet points underneath.
-- Topic "summary" field = newline-separated bullet points starting with "- ". This is the core of the notes.
-- Each bullet: one line, one idea. No prose, no paragraphs.
-- Decisions go INSIDE their topic bullets as "- Decision: ..." — NOT in a separate decisions array.
-- Overview: exactly 1 sentence. Just context, not a summary.
-- Action items: at the end. One line each. "[Task] — [person]" format in the text field.
-- questionsAndOpenItems: only if genuinely unresolved. One line each. Omit if empty.
-- keyQuotes: max 2. Only include if truly notable. Omit if nothing stands out.
-- Omit followUps and decisions arrays entirely (fold into topics and action items).
-- DO NOT use generic topic names ("Discussion", "Updates", "Miscellaneous"). Be SPECIFIC.
-- If personal notes add info not in transcript, weave it into the relevant topic.
-${template.additionalPrompt ? '\n' + template.additionalPrompt : ''}
+STRICT RULES:
+- TOPIC-FIRST structure. Each topic = heading + 2-5 bullet points.
+- Each bullet: ONE line, ONE idea, max 15 words. No prose, no paragraphs, no sub-bullets.
+- Decisions INSIDE their topic: "- Decision: we chose X". No separate decisions array.
+- Overview: exactly 1 sentence. Context only, not a summary of everything.
+- Action items: "[Task] — [Person]" format. One line each.
+- Topic names must be SPECIFIC ("Q3 Launch Plan", not "Updates").
+- Omit empty arrays entirely. Omit questionsAndOpenItems if none.
+- Weave personal notes into relevant topics.
 
-Valid JSON only. No markdown wrapping.`
+DO NOT:
+- Use generic names ("Discussion", "Miscellaneous", "Other Topics")
+- Include filler ("The team discussed...", "It was mentioned that...")
+- Repeat the same info across topics
+- Write more than 5 bullets per topic
+- Include keyQuotes unless truly memorable (max 1)
+${templateInstructions ? '\n' + templateInstructions : ''}
+
+Valid JSON only.`
 }
 
 const CHAT_SYSTEM_PROMPT = `You are Syag, an AI assistant that helps users understand and query their meeting notes. You have access to the user's notes and transcripts. Be concise, helpful, and reference specific meetings when relevant.`
@@ -92,20 +74,19 @@ export async function summarize(
   transcript: any[],
   personalNotes: string,
   model: string,
-  meetingTemplateId?: string
+  meetingTemplateId?: string,
+  customPrompt?: string
 ): Promise<MeetingSummary> {
   const transcriptText = transcript.map(t => `[${t.time}] ${t.speaker}: ${t.text}`).join('\n')
 
-  // Auto-detect meeting type if not specified
   const templateId = meetingTemplateId || detectMeetingType(transcriptText, personalNotes)
   const template = getTemplate(templateId)
 
   if (model.startsWith('local:')) {
-    return summarizeWithLocal(transcriptText, personalNotes, model.replace('local:', ''), template)
+    return summarizeWithLocal(transcriptText, personalNotes, model.replace('local:', ''), template, customPrompt)
   }
 
-  // Pass 1: Extract structured data
-  const extractionInput = `## Meeting Transcript\n${transcriptText}\n\n## Personal Notes\n${personalNotes || '(none)'}\n\nExtract all structured information from this meeting.`
+  const extractionInput = `## Transcript\n${transcriptText}\n\n## Personal Notes\n${personalNotes || '(none)'}`
 
   const extractedData = await routeLLM(
     [
@@ -115,12 +96,11 @@ export async function summarize(
     model
   )
 
-  // Pass 2: Synthesize into final summary
-  const synthesisInput = `## Extracted Meeting Data\n${extractedData}\n\n## Original Personal Notes\n${personalNotes || '(none)'}\n\nSynthesize this into a polished meeting summary.`
+  const synthesisInput = `## Extracted Data\n${extractedData}\n\n## Personal Notes\n${personalNotes || '(none)'}\n\nWrite concise meeting notes.`
 
   const finalSummary = await routeLLM(
     [
-      { role: 'system', content: buildSynthesisSystemPrompt(template) },
+      { role: 'system', content: buildSynthesisSystemPrompt(template, customPrompt) },
       { role: 'user', content: synthesisInput },
     ],
     model
@@ -159,7 +139,8 @@ async function summarizeWithLocal(
   transcriptText: string,
   personalNotes: string,
   modelId: string,
-  template: MeetingTemplate
+  template: MeetingTemplate,
+  customPrompt?: string
 ): Promise<MeetingSummary> {
   const modelPath = getModelPath(modelId)
   if (!modelPath) {
@@ -175,7 +156,7 @@ async function summarizeWithLocal(
     const session = new LlamaChatSession({ contextSequence: ctx.getSequence() })
 
     // Single pass for local models (smaller context window)
-    const prompt = `${buildSynthesisSystemPrompt(template)}
+    const prompt = `${buildSynthesisSystemPrompt(template, customPrompt)}
 
 ## Meeting Transcript
 ${transcriptText}

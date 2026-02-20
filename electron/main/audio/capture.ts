@@ -19,10 +19,29 @@ let customVocabulary = ''
 let isProcessing = false
 let lastSpeechTime = 0
 let autoPaused = false
+let consecutiveSilentChunks = 0
 
-const CHUNK_INTERVAL_MS = 30000
+const CHUNK_INTERVAL_ACTIVE_MS = 30000
+const CHUNK_INTERVAL_IDLE_MS = 60000
 const SAMPLE_RATE = 16000
 const AUTO_PAUSE_SILENCE_MS = 60000
+
+export let currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
+
+export function setChunkInterval(ms: number): void {
+  currentChunkIntervalMs = ms
+  restartChunkTimer()
+}
+
+function restartChunkTimer(): void {
+  if (chunkTimer) clearInterval(chunkTimer)
+  if (!isRecording) return
+  chunkTimer = setInterval(() => {
+    if (!isPaused && audioBuffer.length > 0 && !isProcessing) {
+      processBufferedAudio()
+    }
+  }, currentChunkIntervalMs)
+}
 
 export async function startRecording(
   options: { sttModel: string; deviceId?: string },
@@ -53,11 +72,13 @@ export async function startRecording(
     ensureVADModel().catch(err => console.warn('VAD model pre-load failed:', err.message))
   }
 
+  consecutiveSilentChunks = 0
+  currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
   chunkTimer = setInterval(() => {
     if (!isPaused && audioBuffer.length > 0 && !isProcessing) {
       processBufferedAudio()
     }
-  }, CHUNK_INTERVAL_MS)
+  }, currentChunkIntervalMs)
 
   // Silence monitor: auto-pause when no speech detected for 30s
   silenceTimer = setInterval(() => {
@@ -157,13 +178,27 @@ async function processBufferedAudio(): Promise<void> {
       return
     }
 
-    // Step 1: Run VAD to get speech segments
+    const energy = merged.reduce((sum, v) => sum + v * v, 0) / merged.length
+    if (energy < 0.0001) {
+      consecutiveSilentChunks++
+      if (consecutiveSilentChunks >= 2 && currentChunkIntervalMs < CHUNK_INTERVAL_IDLE_MS) {
+        currentChunkIntervalMs = CHUNK_INTERVAL_IDLE_MS
+        restartChunkTimer()
+      }
+      return
+    }
+
     let speechAudio = merged
     let hasSpeech = true
     try {
       const vadSegments = await runVAD(merged, SAMPLE_RATE)
       if (vadSegments.length === 0) {
         hasSpeech = false
+        return
+      }
+      // Skip segments with less than 0.5s of speech
+      const totalSpeechDuration = vadSegments.reduce((sum, s) => sum + (s.end - s.start), 0)
+      if (totalSpeechDuration < 0.5) {
         return
       }
       speechAudio = extractSpeechSegments(merged, vadSegments, SAMPLE_RATE)
@@ -173,9 +208,13 @@ async function processBufferedAudio(): Promise<void> {
 
     if (hasSpeech) {
       lastSpeechTime = Date.now()
+      consecutiveSilentChunks = 0
+      if (currentChunkIntervalMs > CHUNK_INTERVAL_ACTIVE_MS) {
+        currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
+        restartChunkTimer()
+      }
     }
 
-    // Step 2: Run STT
     let sttResult: STTResult
     const wavBuffer = pcmToWav(speechAudio, SAMPLE_RATE)
 

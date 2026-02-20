@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { AskBar } from "@/components/AskBar";
@@ -18,7 +18,7 @@ import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 import type { SummaryData } from "@/components/EditableSummary";
 
-const MEETING_TEMPLATES = [
+const BUILTIN_TEMPLATES = [
   { id: "general", name: "General", icon: "📋" },
   { id: "standup", name: "Standup", icon: "🏃" },
   { id: "one-on-one", name: "1:1", icon: "🤝" },
@@ -135,6 +135,7 @@ export default function NewNotePage() {
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [transcriptSearch, setTranscriptSearch] = useState("");
   const [meetingTemplate, setMeetingTemplate] = useState("general");
+  const meetingTemplateRef = useRef(meetingTemplate);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showRealTimeTranscript, setShowRealTimeTranscript] = useState(true);
@@ -146,8 +147,22 @@ export default function NewNotePage() {
   const transcriptRef = useRef(transcriptLines);
   const { folders, createFolder } = useFolders();
   const { addNote, deleteNote } = useNotes();
+  const [customTemplates, setCustomTemplates] = useState<Array<{ id: string; name: string; prompt: string }>>([]);
 
-  // Load settings from DB on mount
+  const MEETING_TEMPLATES = useMemo(() => {
+    const custom = customTemplates.map(ct => ({ id: ct.id, name: ct.name, icon: "📝" }));
+    return [...BUILTIN_TEMPLATES, ...custom];
+  }, [customTemplates]);
+
+  useEffect(() => {
+    if (!api) return;
+    api.db.settings.get('custom-templates').then((val: string | null) => {
+      if (val) {
+        try { setCustomTemplates(JSON.parse(val)); } catch {}
+      }
+    });
+  }, []);
+
   useEffect(() => {
     if (!api) return;
     api.db.settings.get('real-time-transcription').then(val => {
@@ -162,8 +177,8 @@ export default function NewNotePage() {
   const elapsedSeconds = activeSession?.elapsedSeconds ?? 0;
   const currentTranscript = usingRealAudio ? transcriptLines : fakeTranscriptLines.slice(0, visibleLines);
 
-  // Keep transcript ref in sync so generateNotes always gets the latest
   useEffect(() => { transcriptRef.current = transcriptLines; }, [transcriptLines]);
+  useEffect(() => { meetingTemplateRef.current = meetingTemplate; }, [meetingTemplate]);
 
   const selectedFolder = folders.find((f) => f.id === selectedFolderId);
 
@@ -240,11 +255,14 @@ export default function NewNotePage() {
     let generatedSummary: SummaryData;
     if (api && selectedAIModel) {
       try {
+        const templateId = meetingTemplateRef.current;
+        const customPrompt = await api.db.settings.get(`template-prompt-${templateId}`).catch(() => null);
         generatedSummary = await api.llm.summarize({
           transcript: finalTranscript,
           personalNotes,
           model: selectedAIModel,
-          meetingTemplateId: meetingTemplate,
+          meetingTemplateId: templateId,
+          customPrompt: customPrompt || undefined,
         });
       } catch (err) {
         console.error('LLM summarization failed, using local fallback:', err);
@@ -276,7 +294,7 @@ export default function NewNotePage() {
     if (generatedSummary.title && generatedSummary.title !== noteTitle) {
       setTitle(generatedSummary.title);
     }
-  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, meetingTemplate, isSummarizing]);
+  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, isSummarizing]);
 
   const handleEndMeeting = useCallback(async () => {
     setRecordingState("stopped");
@@ -306,11 +324,14 @@ export default function NewNotePage() {
 
       if (api && selectedAIModel) {
         try {
+          const tid = meetingTemplateRef.current;
+          const cp = await api.db.settings.get(`template-prompt-${tid}`).catch(() => null);
           const newSummary = await api.llm.summarize({
             transcript: finalTranscript,
             personalNotes,
             model: selectedAIModel,
-            meetingTemplateId: meetingTemplate,
+            meetingTemplateId: tid,
+            customPrompt: cp || undefined,
           });
           setSummary(newSummary);
         } catch {
@@ -571,7 +592,14 @@ export default function NewNotePage() {
                           {MEETING_TEMPLATES.map((t) => (
                             <button
                               key={t.id}
-                              onClick={() => { setMeetingTemplate(t.id); setShowTemplateMenu(false); }}
+                              onClick={() => {
+                                setMeetingTemplate(t.id);
+                                meetingTemplateRef.current = t.id;
+                                setShowTemplateMenu(false);
+                                if (summary && !isSummarizing) {
+                                  setTimeout(() => generateNotes(), 0);
+                                }
+                              }}
                               className={cn(
                                 "flex w-full items-center gap-2.5 px-3 py-1.5 text-xs transition-colors",
                                 meetingTemplate === t.id ? "bg-secondary text-foreground" : "text-foreground hover:bg-secondary"

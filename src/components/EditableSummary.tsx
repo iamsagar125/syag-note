@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
-  CheckCircle2, Circle, Pencil, Quote, AlertCircle,
-  Users
+  CheckCircle2, Circle, Pencil, AlertCircle, Users
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -51,12 +50,6 @@ function parseBullets(text: string): string[] {
     .filter(Boolean);
 }
 
-const priorityDot = {
-  high: "bg-red-500",
-  medium: "bg-amber-500",
-  low: "bg-green-500",
-};
-
 export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
   const [editingField, setEditingField] = useState<string | null>(null);
   const [localSummary, setLocalSummary] = useState<SummaryData>(summary);
@@ -91,23 +84,16 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
   const attendees = localSummary.attendees || [];
 
   return (
-    <div className="animate-fade-in space-y-5">
-      {/* Attendees — subtle inline chips */}
+    <div className="animate-fade-in space-y-4">
       {attendees.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Users className="h-3.5 w-3.5 text-muted-foreground/50" />
+          <Users className="h-3 w-3 text-muted-foreground/40" />
           {attendees.map((a, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center rounded-full bg-secondary/70 px-2 py-0.5 text-[11px] font-medium text-foreground/60"
-            >
-              {a}
-            </span>
+            <span key={i} className="text-[11px] text-foreground/50">{a}{i < attendees.length - 1 ? "," : ""}</span>
           ))}
         </div>
       )}
 
-      {/* Overview — single line of context */}
       {localSummary.overview && (
         <div className="group/section">
           {editingField === "overview" ? (
@@ -122,47 +108,44 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
                 }
                 if (e.key === "Escape") setEditingField(null);
               }}
-              className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-foreground/50 focus:outline-none"
+              className="w-full resize-none bg-transparent text-[13px] leading-relaxed text-foreground/45 focus:outline-none"
               rows={2}
             />
           ) : (
             <p
               onClick={() => setEditingField("overview")}
-              className="text-[14px] leading-relaxed text-foreground/50 cursor-text hover:bg-secondary/30 rounded px-1 -mx-1 transition-colors"
+              className="text-[13px] leading-relaxed text-foreground/45 cursor-text hover:bg-secondary/30 rounded px-1 -mx-1 transition-colors"
             >
               {localSummary.overview}
-              <Pencil className="inline-block ml-1.5 h-2.5 w-2.5 text-muted-foreground/0 group-hover/section:text-muted-foreground/30 transition-colors" />
+              <Pencil className="inline-block ml-1 h-2.5 w-2.5 text-muted-foreground/0 group-hover/section:text-muted-foreground/30 transition-colors" />
             </p>
           )}
         </div>
       )}
 
-      {/* ── Topics: the core of the notes ── */}
       {topics.map((topic, i) => {
         const bullets = parseBullets(topic.summary);
+        if (bullets.length === 0) return null;
         return (
           <div key={i}>
-            <h2 className="font-display text-[15px] font-semibold text-foreground/80 mb-1.5">
+            <h3 className="text-[13px] font-semibold text-foreground/75 mb-1">
               {topic.topic}
-            </h2>
-            <ul className="space-y-1 pl-0.5">
+            </h3>
+            <ul className="space-y-0.5">
               {bullets.map((bullet, j) => {
                 const isDecision = /^Decision:\s*/i.test(bullet);
                 const displayText = bullet.replace(/^Decision:\s*/i, "");
                 return (
-                  <li key={j} className="flex gap-2 text-[14px] leading-relaxed">
+                  <li key={j} className="flex gap-1.5 text-[13px] leading-snug">
                     <span className={cn(
-                      "mt-[9px] h-1.5 w-1.5 flex-shrink-0 rounded-full",
-                      isDecision ? "bg-accent" : "bg-foreground/20"
+                      "mt-[7px] h-1 w-1 flex-shrink-0 rounded-full",
+                      isDecision ? "bg-accent" : "bg-foreground/15"
                     )} />
                     <span className={cn(
-                      isDecision
-                        ? "text-foreground/80 font-medium"
-                        : "text-foreground/65"
+                      "text-foreground/60",
+                      isDecision && "font-medium text-foreground/75"
                     )}>
-                      {isDecision && (
-                        <span className="text-accent font-medium mr-1">Decision:</span>
-                      )}
+                      {isDecision && <span className="text-accent text-[11px] font-semibold mr-1">DECISION</span>}
                       {displayText}
                     </span>
                   </li>
@@ -173,16 +156,13 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
         );
       })}
 
-      {/* Key Points — backward compat for old summaries */}
       {keyPoints.length > 0 && topics.length === 0 && (
         <div>
-          <h2 className="font-display text-[15px] font-semibold text-foreground/80 mb-1.5">
-            Key Points
-          </h2>
-          <ul className="space-y-1 pl-0.5">
+          <h3 className="text-[13px] font-semibold text-foreground/75 mb-1">Key Points</h3>
+          <ul className="space-y-0.5">
             {keyPoints.map((point, i) => (
-              <li key={i} className="flex gap-2 text-[14px] text-foreground/65 leading-relaxed">
-                <span className="mt-[9px] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-foreground/20" />
+              <li key={i} className="flex gap-1.5 text-[13px] text-foreground/60 leading-snug">
+                <span className="mt-[7px] h-1 w-1 flex-shrink-0 rounded-full bg-foreground/15" />
                 <span>{point}</span>
               </li>
             ))}
@@ -190,59 +170,40 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
         </div>
       )}
 
-      {/* ── Action Items ── */}
       {actions.length > 0 && (
         <div>
-          <h2 className="font-display text-[15px] font-semibold text-foreground/80 mb-2">
-            Action Items
-          </h2>
-          <div className="space-y-1.5 pl-0.5">
+          <h3 className="text-[13px] font-semibold text-foreground/75 mb-1.5">Action Items</h3>
+          <div className="space-y-1">
             {actions.map((item, i) => (
-              <div key={i} className="flex items-start gap-2 text-[14px] leading-relaxed group/action">
+              <div key={i} className="flex items-start gap-1.5 text-[13px] leading-snug">
                 <button onClick={() => handleToggleActionDone(i)} className="mt-0.5 flex-shrink-0">
                   {item.done ? (
-                    <CheckCircle2 className="h-4 w-4 text-accent" />
+                    <CheckCircle2 className="h-3.5 w-3.5 text-accent" />
                   ) : (
-                    <Circle className="h-4 w-4 text-foreground/25 hover:text-foreground/45 transition-colors" />
+                    <Circle className="h-3.5 w-3.5 text-foreground/20 hover:text-foreground/40 transition-colors" />
                   )}
                 </button>
-                <div className="flex-1 min-w-0 flex items-baseline gap-2 flex-wrap">
-                  <span className={cn(
-                    item.done ? "text-muted-foreground line-through" : "text-foreground/70"
-                  )}>
-                    {item.text}
-                  </span>
-                  {item.assignee && (
-                    <span className="text-[11px] text-muted-foreground/70 font-medium">
-                      — {item.assignee}
-                    </span>
-                  )}
-                  {"priority" in item && item.priority && (
-                    <span className={cn(
-                      "inline-block mt-px h-1.5 w-1.5 rounded-full flex-shrink-0",
-                      priorityDot[item.priority as keyof typeof priorityDot] || priorityDot.medium
-                    )} />
-                  )}
-                  {item.dueDate && (
-                    <span className="text-[11px] text-muted-foreground/60">{item.dueDate}</span>
-                  )}
-                </div>
+                <span className={cn(
+                  item.done ? "text-muted-foreground/50 line-through" : "text-foreground/60"
+                )}>
+                  {item.text}
+                </span>
+                {item.assignee && item.assignee !== "You" && (
+                  <span className="text-[11px] text-muted-foreground/50 flex-shrink-0">— {item.assignee}</span>
+                )}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Open Questions */}
       {questions.length > 0 && (
         <div>
-          <h2 className="font-display text-[15px] font-semibold text-foreground/80 mb-1.5">
-            Open Questions
-          </h2>
-          <ul className="space-y-1 pl-0.5">
+          <h3 className="text-[13px] font-semibold text-foreground/75 mb-1">Open Questions</h3>
+          <ul className="space-y-0.5">
             {questions.map((q, i) => (
-              <li key={i} className="flex gap-2 text-[14px] text-foreground/65 leading-relaxed">
-                <AlertCircle className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-amber-500/70" />
+              <li key={i} className="flex gap-1.5 text-[13px] text-foreground/55 leading-snug">
+                <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0 text-amber-500/60" />
                 <span>{q}</span>
               </li>
             ))}
@@ -250,20 +211,14 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
         </div>
       )}
 
-      {/* Key Quotes — only if present */}
       {quotes.length > 0 && (
-        <div>
-          <h2 className="font-display text-[15px] font-semibold text-foreground/80 mb-2">
-            Notable
-          </h2>
-          <div className="space-y-2 pl-0.5">
-            {quotes.map((q, i) => (
-              <blockquote key={i} className="border-l-2 border-accent/25 pl-3 py-0.5">
-                <p className="text-[13px] italic text-foreground/55 leading-relaxed">"{q.text}"</p>
-                <p className="text-[11px] text-muted-foreground/60 mt-0.5">— {q.speaker}</p>
-              </blockquote>
-            ))}
-          </div>
+        <div className="pt-1">
+          {quotes.map((q, i) => (
+            <blockquote key={i} className="border-l-2 border-accent/20 pl-2.5 py-0.5">
+              <p className="text-[12px] italic text-foreground/40">"{q.text}"</p>
+              <p className="text-[11px] text-muted-foreground/50">— {q.speaker}</p>
+            </blockquote>
+          ))}
         </div>
       )}
     </div>

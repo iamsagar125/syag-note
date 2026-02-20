@@ -4,6 +4,8 @@ import { setupTray } from './tray'
 import { registerIPCHandlers } from './ipc-handlers'
 import { initDatabase } from './storage/database'
 import { ensureModelsDir } from './models/manager'
+import { startMeetingDetection, stopMeetingDetection } from './meeting-detector'
+import { setupPowerMonitor } from './power-manager'
 
 app.setName('Syag')
 
@@ -18,6 +20,8 @@ app.whenReady().then(async () => {
 
   const mainWindow = createMainWindow()
   setupTray(mainWindow)
+  startMeetingDetection(mainWindow)
+  setupPowerMonitor(mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -35,6 +39,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  stopMeetingDetection()
   const win = getMainWindow()
   if (win && !win.isDestroyed()) {
     win.removeAllListeners('close')
