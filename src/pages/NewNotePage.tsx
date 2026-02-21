@@ -112,8 +112,8 @@ function formatTime(seconds: number) {
 export default function NewNotePage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string; startFresh?: boolean } | null;
-  const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture } = useRecording();
+  const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string; startFresh?: boolean; triggerPauseAndSummarize?: boolean } | null;
+  const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture, setSessionScratch, getSessionScratch } = useRecording();
   const { selectedSTTModel, selectedAIModel } = useModelSettings();
   const api = getElectronAPI();
 
@@ -159,6 +159,7 @@ export default function NewNotePage() {
   const lastGeneratedTranscriptLengthRef = useRef(-1);
   const lastGeneratedNotesRef = useRef("");
   const userPausedRef = useRef(false);
+  const triggeredPauseAndSummarizeRef = useRef(false);
   const { folders, createFolder } = useFolders();
   const { addNote, deleteNote } = useNotes();
   const [customTemplates, setCustomTemplates] = useState<Array<{ id: string; name: string; prompt: string }>>([]);
@@ -194,6 +195,37 @@ export default function NewNotePage() {
   useEffect(() => { transcriptRef.current = transcriptLines; }, [transcriptLines]);
   useEffect(() => { meetingTemplateRef.current = meetingTemplate; }, [meetingTemplate]);
 
+  // Sync personalNotes and title to session scratch so indicator pause-and-summarize can restore when navigating back
+  useEffect(() => {
+    if (activeSession?.noteId) {
+      setSessionScratch({ personalNotes, title: title || undefined });
+    }
+  }, [activeSession?.noteId, personalNotes, title, setSessionScratch]);
+
+  useEffect(() => {
+    if (!eventState?.triggerPauseAndSummarize) triggeredPauseAndSummarizeRef.current = false;
+  }, [eventState?.triggerPauseAndSummarize]);
+
+  // When indicator triggered "pause and summarize", we land here with state; run generateNotes with scratch and clear state
+  useEffect(() => {
+    if (!eventState?.triggerPauseAndSummarize || !activeSession?.noteId || existingSessionId !== activeSession.noteId) return;
+    if (triggeredPauseAndSummarizeRef.current) return;
+    triggeredPauseAndSummarizeRef.current = true;
+    const scratch = getSessionScratch();
+    setPersonalNotes(scratch.personalNotes ?? '');
+    setTitle(scratch.title ?? activeSession.title ?? '');
+    setRecordingState('paused');
+    generateNotes({ personalNotes: scratch.personalNotes, title: scratch.title })
+      .then(() => {
+        navigate(location.pathname + location.search, { replace: true, state: {} });
+      })
+      .catch((err) => {
+        console.error('Indicator pause-and-summarize failed:', err);
+        toast.error('Summary failed. Try again.');
+        navigate(location.pathname + location.search, { replace: true, state: {} });
+      });
+  }, [eventState?.triggerPauseAndSummarize, activeSession?.noteId, activeSession?.title, existingSessionId, getSessionScratch, generateNotes, navigate, location.pathname, location.search]);
+
   const selectedFolder = (folders ?? []).find((f) => f.id === selectedFolderId);
 
   useEffect(() => {
@@ -212,6 +244,7 @@ export default function NewNotePage() {
           setSummary(null);
           setPersonalNotes("");
           setRecordingState("recording");
+          setViewMode("ai-notes");
           startSession(newId);
           if (usingRealAudio) {
             startAudioCapture(selectedSTTModel || "").catch((err) => console.error("Audio capture failed:", err));
@@ -267,60 +300,70 @@ export default function NewNotePage() {
     updateSession({ isRecording: true, title: title || "New note" });
   }, [recordingState, title, updateSession]);
 
-  const generateNotes = useCallback(async () => {
+  const generateNotes = useCallback(async (override?: { personalNotes?: string; title?: string }) => {
     if (isSummarizing) return;
     setIsSummarizing(true);
     setTranscriptVisible(true);
-    const noteTitle = title || "Meeting notes";
-    if (!title) setTitle(noteTitle);
+    const useNotes = override?.personalNotes ?? personalNotes;
+    const useTitle = override?.title ?? title;
+    const noteTitle = useTitle || "Meeting notes";
+    if (!override && !useTitle) setTitle(noteTitle);
 
     const finalTranscript = usingRealAudio ? transcriptRef.current : fakeTranscriptLines;
 
     let generatedSummary: SummaryData;
-    if (api && selectedAIModel) {
+    try {
+      if (api && selectedAIModel) {
+        try {
+          const templateId = meetingTemplateRef.current;
+          const customPrompt = BUILTIN_TEMPLATE_IDS.has(templateId)
+            ? undefined
+            : (await api.db.settings.get(`template-prompt-${templateId}`).catch(() => null)) || undefined;
+          generatedSummary = await api.llm.summarize({
+            transcript: finalTranscript,
+            personalNotes: useNotes,
+            model: selectedAIModel,
+            meetingTemplateId: templateId,
+            customPrompt,
+          });
+        } catch (err) {
+          console.error('LLM summarization failed, using local fallback:', err);
+          generatedSummary = generateLocalSummary(useNotes, finalTranscript, !!selectedSTTModel);
+        }
+      } else {
+        await new Promise(r => setTimeout(r, 1500));
+        generatedSummary = generateLocalSummary(useNotes, finalTranscript, !!selectedSTTModel);
+      }
+
+      lastGeneratedTranscriptLengthRef.current = finalTranscript.length;
+      lastGeneratedNotesRef.current = useNotes;
+      setSummary(generatedSummary);
+
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+      const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
       try {
-        const templateId = meetingTemplateRef.current;
-        const customPrompt = BUILTIN_TEMPLATE_IDS.has(templateId)
-          ? undefined
-          : (await api.db.settings.get(`template-prompt-${templateId}`).catch(() => null)) || undefined;
-        generatedSummary = await api.llm.summarize({
+        addNote({
+          id: noteId,
+          title: generatedSummary.title || noteTitle,
+          date: dateStr,
+          time: timeStr,
+          duration: formatTime(elapsedSeconds),
+          personalNotes: useNotes,
           transcript: finalTranscript,
-          personalNotes,
-          model: selectedAIModel,
-          meetingTemplateId: templateId,
-          customPrompt,
+          summary: generatedSummary,
+          folderId: selectedFolderId,
         });
       } catch (err) {
-        console.error('LLM summarization failed, using local fallback:', err);
-        generatedSummary = generateLocalSummary(personalNotes, finalTranscript, !!selectedSTTModel);
+        console.error('Failed to save note:', err);
+        toast.error("Note could not be saved. Check console.");
       }
-    } else {
-      await new Promise(r => setTimeout(r, 1500));
-      generatedSummary = generateLocalSummary(personalNotes, finalTranscript, !!selectedSTTModel);
-    }
-
-    lastGeneratedTranscriptLengthRef.current = finalTranscript.length;
-    lastGeneratedNotesRef.current = personalNotes;
-    setSummary(generatedSummary);
-    setIsSummarizing(false);
-
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
-    const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-
-    addNote({
-      id: noteId,
-      title: generatedSummary.title || noteTitle,
-      date: dateStr,
-      time: timeStr,
-      duration: formatTime(elapsedSeconds),
-      personalNotes,
-      transcript: finalTranscript,
-      summary: generatedSummary,
-      folderId: selectedFolderId,
-    });
-    if (generatedSummary.title && generatedSummary.title !== noteTitle) {
-      setTitle(generatedSummary.title);
+      if (generatedSummary.title && generatedSummary.title !== noteTitle) {
+        setTitle(generatedSummary.title);
+      }
+    } finally {
+      setIsSummarizing(false);
     }
   }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, isSummarizing]);
 
@@ -333,7 +376,10 @@ export default function NewNotePage() {
       setRecordingState("paused");
       // Auto-paused by main process (silence detection) -- auto-generate notes if enabled
       if (autoGenerateNotes && !isSummarizing && (transcriptRef.current.length > 0 || (typeof personalNotes === 'string' && personalNotes.trim().length > 0))) {
-        generateNotes();
+        generateNotes().catch((err) => {
+          console.error("Auto-pause summary failed:", err);
+          toast.error("Summary failed. Try again.");
+        });
       }
     } else if (activeSession && activeSession.isRecording && recordingState === "paused" && !userPausedRef.current) {
       setRecordingState("recording");
@@ -379,8 +425,14 @@ export default function NewNotePage() {
       await new Promise(r => setTimeout(r, 500));
     }
 
-    await generateNotes();
-    clearSession();
+    try {
+      await generateNotes();
+    } catch (err) {
+      console.error("End meeting summary failed:", err);
+      toast.error("Summary failed. Note may not be saved.");
+    } finally {
+      clearSession();
+    }
   }, [usingRealAudio, stopAudioCapture, generateNotes, clearSession]);
 
   const handleResume = useCallback(() => {

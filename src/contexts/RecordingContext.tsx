@@ -34,6 +34,9 @@ interface RecordingContextType {
   stopAudioCapture: () => Promise<void>;
   pauseAudioCapture: () => Promise<void>;
   resumeAudioCapture: (sttModel?: string) => Promise<void>;
+  /** Scratch for current session (personalNotes, title) so indicator pause-and-summarize can restore state when navigating back. */
+  setSessionScratch: (scratch: { personalNotes?: string; title?: string }) => void;
+  getSessionScratch: () => { personalNotes?: string; title?: string };
 }
 
 const RecordingContext = createContext<RecordingContextType | undefined>(undefined);
@@ -51,8 +54,14 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const cleanupRef = useRef<(() => void) | null>(null);
   const speechRecRef = useRef<any>(null);
   const elapsedRef = useRef(0);
+  const sessionScratchRef = useRef<{ personalNotes?: string; title?: string }>({});
 
   const api = getElectronAPI();
+
+  const setSessionScratch = useCallback((scratch: { personalNotes?: string; title?: string }) => {
+    sessionScratchRef.current = { ...sessionScratchRef.current, ...scratch };
+  }, []);
+  const getSessionScratch = useCallback(() => ({ ...sessionScratchRef.current }), []);
 
   useEffect(() => {
     if (!api) return;
@@ -125,6 +134,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const clearSession = useCallback(() => {
     setActiveSession(null);
+    sessionScratchRef.current = {};
     if (api) {
       api.app.updateTrayMeetingInfo?.(null);
     }
@@ -383,7 +393,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     <RecordingContext.Provider value={{
       activeSession, isActive, startSession, resumeSession, updateSession, clearSession,
       transcriptLines, removeTranscriptLineAt, isCapturing, usingWebSpeech, captureError, clearCaptureError,
-      startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture
+      startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture,
+      setSessionScratch, getSessionScratch
     }}>
       {children}
     </RecordingContext.Provider>

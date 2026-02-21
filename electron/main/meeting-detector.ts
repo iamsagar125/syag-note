@@ -25,6 +25,7 @@ let mainWindow: BrowserWindow | null = null
 let activeMeetingApp: string | null = null
 let meetingStartTime: number | null = null
 let notifiedForCurrentMeeting = false
+let lastPollHadMeetingApp = false
 let lastProcessHash = ''
 let isChecking = false
 export type CalendarEventForMain = { id: string; title: string; start: number; end: number; joinLink?: string }
@@ -36,7 +37,6 @@ const STARTING_SOON_END_MS = 45 * 1000     // until 45s before start
 
 // Poll every 5s so joining a call triggers notification quickly (Granola/Notion-style)
 let currentPollMs = 5000
-const COOLDOWN_MS = 90000
 
 function execAsync(cmd: string, timeoutMs = 3000): Promise<string> {
   return new Promise((resolve) => {
@@ -153,8 +153,8 @@ async function checkForMeetings(): Promise<void> {
       if (matchedApp) break
     }
 
-    if (matchedApp && !notifiedForCurrentMeeting) {
-      // Notify as soon as meeting app is in process list (no mic gate so joining triggers immediately)
+    // Notify only when app transitions from absent to present (user "joined")
+    if (matchedApp && !lastPollHadMeetingApp) {
       activeMeetingApp = matchedApp
       meetingStartTime = Date.now()
       notifiedForCurrentMeeting = true
@@ -177,8 +177,6 @@ async function checkForMeetings(): Promise<void> {
 
       showMeetingDetectedNotification(meetingTitle, matchedApp)
       mainWindow?.webContents.send('meeting:detected', detectionData)
-
-      setTimeout(() => { notifiedForCurrentMeeting = false }, COOLDOWN_MS)
     } else if (!matchedApp && activeMeetingApp) {
       console.log(`[MeetingDetector] Meeting ended: ${activeMeetingApp}`)
       mainWindow?.webContents.send('meeting:ended', { app: activeMeetingApp })
@@ -186,7 +184,10 @@ async function checkForMeetings(): Promise<void> {
       activeMeetingApp = null
       meetingStartTime = null
       notifiedForCurrentMeeting = false
+      lastPollHadMeetingApp = false
     }
+
+    lastPollHadMeetingApp = !!matchedApp
   } catch {
     // Silent
   } finally {
