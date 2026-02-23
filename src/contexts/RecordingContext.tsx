@@ -9,6 +9,7 @@ interface RecordingSession {
   startTime: number; // Date.now() when recording started
 }
 
+/** Transcript line: speaker is "You" (user/mic) or "Others" (system/remote). UI shows "Me" / "Them". */
 type TranscriptLine = { speaker: string; time: string; text: string };
 
 export const CAPTURE_ERROR_NO_SOURCE =

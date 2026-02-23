@@ -1,5 +1,6 @@
 import { exec } from 'child_process'
 import { BrowserWindow } from 'electron'
+import { getSetting } from './storage/database'
 import { showMeetingDetectedNotification, showMeetingStartingSoonNotification, updateTrayMeetingInfo } from './tray'
 
 // Known meeting app process substrings -> display name (match ps -axo comm= output on macOS)
@@ -32,8 +33,8 @@ export type CalendarEventForMain = { id: string; title: string; start: number; e
 let calendarEvents: CalendarEventForMain[] = []
 let startingSoonInterval: ReturnType<typeof setInterval> | null = null
 const notifiedStartingSoonIds = new Set<string>()
-const STARTING_SOON_WINDOW_MS = 90 * 1000   // notify when 90s before start
-const STARTING_SOON_END_MS = 45 * 1000     // until 45s before start
+const STARTING_SOON_WINDOW_MS = 70 * 1000   // notify when 70s before start (~1 min, Granola-style)
+const STARTING_SOON_END_MS = 50 * 1000     // until 50s before start
 
 // Poll every 5s so joining a call triggers notification quickly
 let currentPollMs = 5000
@@ -156,6 +157,16 @@ async function checkForMeetings(): Promise<void> {
     // Notify whenever meeting app transitions from absent to present (scheduled or ad-hoc). Calendar used only for title.
     const calEvent = findCurrentCalendarEvent()
     if (matchedApp && !lastPollHadMeetingApp) {
+      // Optional: require mic/audio in use (Granola-style) to reduce false positives when app is open but not in a call
+      const requireMic = getSetting('meeting-detection-require-mic') === 'true'
+      if (requireMic) {
+        const micActive = await checkMicActive()
+        if (!micActive) {
+          isChecking = false
+          return
+        }
+      }
+
       activeMeetingApp = matchedApp
       meetingStartTime = Date.now()
       notifiedForCurrentMeeting = true

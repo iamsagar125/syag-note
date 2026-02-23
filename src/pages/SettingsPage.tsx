@@ -41,6 +41,7 @@ const TOGGLE_DB_KEYS: Record<string, string> = {
   weeklyDigest: 'weekly-digest-notification',
   calendarSync: 'calendar-sync',
   showUpcoming: 'show-upcoming-meetings',
+  meetingDetectionRequireMic: 'meeting-detection-require-mic',
 };
 
 const DEFAULT_TOGGLES: Record<string, boolean> = {
@@ -52,6 +53,7 @@ const DEFAULT_TOGGLES: Record<string, boolean> = {
   weeklyDigest: false,
   calendarSync: true,
   showUpcoming: true,
+  meetingDetectionRequireMic: false,
 };
 
 function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
@@ -969,6 +971,9 @@ export default function SettingsPage() {
                   </SettingRow>
                   <SettingRow label="Show upcoming meetings" description="Display upcoming meetings on the home screen">
                     <Toggle enabled={toggles.showUpcoming} onToggle={() => toggle("showUpcoming")} />
+                  </SettingRow>
+                  <SettingRow label="Only notify when microphone is in use" description="Fewer false positives: show “Meeting detected” only when a meeting app is in use and the mic is active (ad-hoc calls). Turn off if you join muted and miss prompts.">
+                    <Toggle enabled={toggles.meetingDetectionRequireMic} onToggle={() => toggle("meetingDetectionRequireMic")} />
                   </SettingRow>
                   <div className="space-y-2">
                     <h3 className="text-[13px] font-medium text-foreground">Connected Calendars</h3>

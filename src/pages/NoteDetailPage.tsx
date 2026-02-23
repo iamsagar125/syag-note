@@ -266,9 +266,9 @@ export default function NoteDetailPage() {
                   <div key={i} className={i >= note.transcript.length ? "animate-fade-in" : ""}>
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <div className="flex h-4 w-4 items-center justify-center rounded-full bg-secondary text-[8px] font-medium text-foreground">
-                        {line.speaker.charAt(0)}
+                        {(line.speaker === "You" ? "Me" : "Them").charAt(0)}
                       </div>
-                      <span className="text-[10px] font-medium text-foreground">{line.speaker}</span>
+                      <span className="text-[10px] font-medium text-foreground">{line.speaker === "You" ? "Me" : "Them"}</span>
                       <span className="text-[10px] text-muted-foreground">{line.time}</span>
                     </div>
                     <p className="text-[12px] text-muted-foreground leading-relaxed pl-6">

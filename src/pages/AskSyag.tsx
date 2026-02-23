@@ -6,6 +6,7 @@ import { useNotes } from "@/contexts/NotesContext";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 import { cn } from "@/lib/utils";
+import { ChatMessageContent } from "@/components/ChatMessageContent";
 
 interface Message {
   role: "user" | "assistant";
@@ -272,18 +273,14 @@ export default function AskSyag() {
                       )}
                     </>
                   ) : (
-                    <div className="text-[14px] leading-relaxed text-foreground whitespace-pre-line">
-                      {msg.text}
-                    </div>
+                    <ChatMessageContent text={msg.text} />
                   )}
                 </div>
               ))}
               {/* Streaming text display */}
               {streamingText && (
                 <div className="animate-fade-in">
-                  <div className="text-[14px] leading-relaxed text-foreground whitespace-pre-line">
-                    {streamingText}
-                  </div>
+                  <ChatMessageContent text={streamingText} />
                 </div>
               )}
               {isLoading && !streamingText && (

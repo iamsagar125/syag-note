@@ -3,6 +3,7 @@ import { ArrowUp, X, FileText, Play, Eye, EyeOff, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { getElectronAPI, isElectron } from "@/lib/electron-api";
+import { ChatMessageContent } from "@/components/ChatMessageContent";
 
 interface AskBarProps {
   context?: "home" | "meeting";
@@ -173,7 +174,7 @@ export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, 
                           : "bg-secondary text-foreground"
                       )}
                     >
-                      {msg.text}
+                      {msg.role === "user" ? msg.text : <ChatMessageContent text={msg.text} />}
                     </div>
                   </div>
                 ))}
