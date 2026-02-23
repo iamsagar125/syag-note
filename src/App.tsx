@@ -56,7 +56,7 @@ function TrayNavigationHandler() {
     });
 
     const cleanupStartRecording = api.app.onTrayStartRecording?.(() => {
-      navigate("/new-note", { state: { startFresh: true } });
+      navigate("/new-note?startFresh=1", { state: { startFresh: true } });
     });
 
     const cleanupPause = api.app.onTrayPauseRecording?.(() => {

@@ -35,7 +35,7 @@ const notifiedStartingSoonIds = new Set<string>()
 const STARTING_SOON_WINDOW_MS = 90 * 1000   // notify when 90s before start
 const STARTING_SOON_END_MS = 45 * 1000     // until 45s before start
 
-// Poll every 5s so joining a call triggers notification quickly (Granola/Notion-style)
+// Poll every 5s so joining a call triggers notification quickly
 let currentPollMs = 5000
 
 function execAsync(cmd: string, timeoutMs = 3000): Promise<string> {
@@ -153,16 +153,15 @@ async function checkForMeetings(): Promise<void> {
       if (matchedApp) break
     }
 
-    // Notify only when app transitions from absent to present (user "joined")
+    // Notify whenever meeting app transitions from absent to present (scheduled or ad-hoc). Calendar used only for title.
+    const calEvent = findCurrentCalendarEvent()
     if (matchedApp && !lastPollHadMeetingApp) {
       activeMeetingApp = matchedApp
       meetingStartTime = Date.now()
       notifiedForCurrentMeeting = true
 
-      const calEvent = findCurrentCalendarEvent()
       const now = Date.now()
-      // Only use calendar event title when we're in a confident window (2 min before start to 5 min after end).
-      // Otherwise show generic "{App} Meeting" to avoid showing a wrong/unrelated event title (e.g. another meeting in the 15-min window).
+      // Use calendar event title when we're in a confident window (2 min before start to 5 min after end); else e.g. "Microsoft Teams Meeting"
       const useCalendarTitle = calEvent && now >= calEvent.start - 2 * 60 * 1000 && now <= calEvent.end + 5 * 60 * 1000
       const meetingTitle = useCalendarTitle && calEvent ? calEvent.title : `${matchedApp} Meeting`
 
@@ -178,6 +177,7 @@ async function checkForMeetings(): Promise<void> {
       showMeetingDetectedNotification(meetingTitle, matchedApp)
       mainWindow?.webContents.send('meeting:detected', detectionData)
     } else if (!matchedApp && activeMeetingApp) {
+      // Meeting ends only when app process disappears (user left the call / closed the app)
       console.log(`[MeetingDetector] Meeting ended: ${activeMeetingApp}`)
       mainWindow?.webContents.send('meeting:ended', { app: activeMeetingApp })
       updateTrayMeetingInfo(null)

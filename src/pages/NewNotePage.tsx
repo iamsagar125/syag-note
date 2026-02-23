@@ -120,6 +120,8 @@ export default function NewNotePage() {
   const searchParams = new URLSearchParams(location.search);
   const existingSessionId = searchParams.get("session");
   const isReturning = !!(existingSessionId && activeSession && activeSession.noteId === existingSessionId);
+  const startFreshFromUrl = searchParams.get("startFresh") === "1";
+  const startFresh = eventState?.startFresh === true || startFreshFromUrl;
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [recordingState, setRecordingState] = useState<RecordingState>(() => {
@@ -160,6 +162,7 @@ export default function NewNotePage() {
   const lastGeneratedNotesRef = useRef("");
   const userPausedRef = useRef(false);
   const triggeredPauseAndSummarizeRef = useRef(false);
+  const lastStartFreshKeyRef = useRef<string | null>(null);
   const { folders, createFolder } = useFolders();
   const { addNote, deleteNote } = useNotes();
   const [customTemplates, setCustomTemplates] = useState<Array<{ id: string; name: string; prompt: string }>>([]);
@@ -230,10 +233,11 @@ export default function NewNotePage() {
 
   useEffect(() => {
     try {
-      const startFresh = eventState?.startFresh === true;
-
       // User explicitly chose "New note" / "Quick Note": stop previous session, run summary for it, then start fresh
       if (startFresh) {
+        if (lastStartFreshKeyRef.current === location.key) return;
+        lastStartFreshKeyRef.current = location.key;
+
         const hadSession = activeSession?.noteId;
         const hadContent = transcriptRef.current.length > 0 || (typeof personalNotes === "string" && personalNotes.trim().length > 0);
         const doStartNew = () => {
@@ -246,8 +250,12 @@ export default function NewNotePage() {
           setRecordingState("recording");
           setViewMode("ai-notes");
           startSession(newId);
+          navigate(`/new-note?session=${newId}`, { replace: true });
           if (usingRealAudio) {
-            startAudioCapture(selectedSTTModel || "").catch((err) => console.error("Audio capture failed:", err));
+            startAudioCapture(selectedSTTModel || "").catch((err) => {
+              console.error("Audio capture failed:", err);
+              toast.error("Recording couldn't start. Check microphone and STT settings.");
+            });
           }
         };
         if (hadSession && hadContent && usingRealAudio) {
@@ -280,6 +288,7 @@ export default function NewNotePage() {
         if (usingRealAudio) {
           startAudioCapture(selectedSTTModel || "").catch((err) => {
             console.error("Audio capture failed:", err);
+            toast.error("Recording couldn't start. Check microphone and STT settings.");
           });
         }
       } else if (activeSession) {
@@ -292,7 +301,7 @@ export default function NewNotePage() {
       console.error("NewNotePage mount error:", err);
     }
     return () => {};
-  }, []);
+  }, [location.key, startFresh]);
 
   // Keep the session title synced with local title state
   useEffect(() => {
