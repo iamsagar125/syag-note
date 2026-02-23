@@ -113,10 +113,12 @@ const electronAPI = {
   app: {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
     getPlatform: () => process.platform,
+    appleFoundationAvailable: () => ipcRenderer.invoke('app:apple-foundation-available') as Promise<boolean>,
     setLoginItem: (enabled: boolean) => ipcRenderer.invoke('app:set-login-item', enabled),
-    onTrayStartRecording: (callback: () => void) => {
-      ipcRenderer.on('tray:start-recording', callback)
-      return () => ipcRenderer.removeListener('tray:start-recording', callback)
+    onTrayStartRecording: (callback: (data?: { title?: string }) => void) => {
+      const handler = (_e: unknown, data?: { title?: string }) => callback(data)
+      ipcRenderer.on('tray:start-recording', handler)
+      return () => ipcRenderer.removeListener('tray:start-recording', handler)
     },
     onTrayStopRecording: (callback: () => void) => {
       ipcRenderer.on('tray:stop-recording', callback)

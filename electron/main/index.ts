@@ -2,7 +2,8 @@ import { app, BrowserWindow } from 'electron'
 import { createMainWindow, getMainWindow } from './windows'
 import { setupTray } from './tray'
 import { registerIPCHandlers } from './ipc-handlers'
-import { initDatabase } from './storage/database'
+import { initDatabase, getAllNotes, getAllFolders } from './storage/database'
+import { syncAllSummarizedNotesToDocuments } from './storage/documents-sync'
 import { ensureModelsDir } from './models/manager'
 import { startMeetingDetection, stopMeetingDetection } from './meeting-detector'
 import { setupPowerMonitor } from './power-manager'
@@ -12,6 +13,11 @@ app.setName('Syag')
 app.whenReady().then(async () => {
   try {
     initDatabase()
+    try {
+      syncAllSummarizedNotesToDocuments(getAllNotes(), getAllFolders())
+    } catch (e) {
+      console.error('Documents sync on startup:', e)
+    }
   } catch (err) {
     console.error('Failed to initialize database:', err)
   }

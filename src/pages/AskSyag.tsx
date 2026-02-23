@@ -5,7 +5,7 @@ import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { useNotes } from "@/contexts/NotesContext";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
-import { cn } from "@/lib/utils";
+import { cn, normalizeChatResponse } from "@/lib/utils";
 import { ChatMessageContent } from "@/components/ChatMessageContent";
 
 interface Message {
@@ -47,7 +47,7 @@ export default function AskSyag() {
       if (chunk.done) {
         setStreamingText((current) => {
           if (current) {
-            setMessages((prev) => [...prev, { role: "assistant", text: current }]);
+            setMessages((prev) => [...prev, { role: "assistant", text: normalizeChatResponse(current) }]);
           }
           return "";
         });

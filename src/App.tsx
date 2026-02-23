@@ -4,7 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, HashRouter, Routes, Route, useLocation, useNavigate, Navigate } from "react-router-dom";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useRecording } from "@/contexts/RecordingContext";
 import { ModelSettingsProvider } from "@/contexts/ModelSettingsContext";
 import { FolderProvider } from "@/contexts/FolderContext";
@@ -21,7 +21,6 @@ import AskSyag from "./pages/AskSyag";
 import NewNotePage from "./pages/NewNotePage";
 import CalendarPage from "./pages/CalendarPage";
 import SettingsPage from "./pages/SettingsPage";
-import NoteDetailPage from "./pages/NoteDetailPage";
 import OnboardingPage from "./pages/OnboardingPage";
 import NotFound from "./pages/NotFound";
 import { TrayMenu } from "@/components/TrayMenu";
@@ -45,37 +44,51 @@ function TrayNavigationHandler() {
   const api = getElectronAPI();
   const navigate = useNavigate();
   const { activeSession, pauseAudioCapture } = useRecording();
+  const activeSessionRef = useRef(activeSession);
+  activeSessionRef.current = activeSession;
 
   useEffect(() => {
     if (!api) return;
 
     const cleanupNav = api.app.onTrayNavigateToMeeting?.(() => {
-      if (activeSession?.noteId) {
-        navigate(`/new-note?session=${activeSession.noteId}`);
+      if (activeSessionRef.current?.noteId) {
+        navigate(`/new-note?session=${activeSessionRef.current.noteId}`);
       }
     });
 
-    const cleanupStartRecording = api.app.onTrayStartRecording?.(() => {
-      navigate("/new-note?startFresh=1", { state: { startFresh: true } });
+    const cleanupStartRecording = api.app.onTrayStartRecording?.((data) => {
+      navigate("/new-note?startFresh=1", { state: { startFresh: true, eventTitle: data?.title } });
     });
 
     const cleanupPause = api.app.onTrayPauseRecording?.(() => {
       pauseAudioCapture();
     });
 
+    const cleanupMeetingEnded = api.app.onMeetingEnded?.(() => {
+      const session = activeSessionRef.current;
+      if (session?.noteId && session?.isRecording) {
+        pauseAudioCapture().then(() => {
+          navigate(`/new-note?session=${session.noteId}`, {
+            state: { triggerPauseAndSummarize: true },
+          });
+        });
+      }
+    });
+
     return () => {
       cleanupNav?.();
       cleanupStartRecording?.();
       cleanupPause?.();
+      cleanupMeetingEnded?.();
     };
-  }, [api, activeSession?.noteId, navigate, pauseAudioCapture]);
+  }, [api, navigate, pauseAudioCapture]);
 
   return null;
 }
 
 function AppContent() {
   const location = useLocation();
-  const isOnRecordingPage = location.pathname === "/new-note";
+  const isOnRecordingPage = location.pathname === "/new-note" || location.pathname.startsWith("/note/");
   const onboardingDone = isOnboardingComplete();
 
   if (!onboardingDone && location.pathname !== "/onboarding") {
@@ -93,7 +106,11 @@ function AppContent() {
         <Route path="/notes" element={<AllNotes />} />
         <Route path="/ask" element={<AskSyag />} />
         
-        <Route path="/note/:id" element={<NoteDetailPage />} />
+        <Route path="/note/:id" element={
+          <ErrorBoundary>
+            <NewNotePage />
+          </ErrorBoundary>
+        } />
         <Route path="/new-note" element={
           <ErrorBoundary>
             <NewNotePage />

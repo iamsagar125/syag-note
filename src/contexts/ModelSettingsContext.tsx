@@ -327,6 +327,7 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
     }
     const [providerId, ...rest] = selectedAIModel.split(":");
     const modelName = rest.join(":");
+    if (providerId === "apple") return "Apple Foundation (On-Device)";
     const provider = enterpriseProviders.find((p) => p.id === providerId);
     return provider ? `${modelName}` : selectedAIModel;
   };

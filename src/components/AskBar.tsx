@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { getElectronAPI, isElectron } from "@/lib/electron-api";
 import { ChatMessageContent } from "@/components/ChatMessageContent";
+import { normalizeChatResponse } from "@/lib/utils";
 
 interface AskBarProps {
   context?: "home" | "meeting";
@@ -92,7 +93,7 @@ export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, 
         if (response) {
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", text: response },
+            { role: "assistant", text: normalizeChatResponse(response) },
           ]);
         }
       } catch (err: any) {

@@ -76,8 +76,9 @@ type ElectronAPI = {
   app: {
     getVersion: () => Promise<string>
     getPlatform: () => string
+    appleFoundationAvailable?: () => Promise<boolean>
     setLoginItem?: (enabled: boolean) => Promise<boolean>
-    onTrayStartRecording: (callback: () => void) => () => void
+    onTrayStartRecording: (callback: (data?: { title?: string }) => void) => () => void
     onTrayStopRecording?: (callback: () => void) => () => void
     onTrayNavigateToMeeting?: (callback: () => void) => () => void
     onTrayPauseRecording?: (callback: () => void) => () => void
@@ -86,7 +87,7 @@ type ElectronAPI = {
     onMeetingStartingSoon?: (callback: (data: { eventId?: string; title?: string; start?: number; end?: number; joinLink?: string }) => void) => () => void
     onPowerModeChanged?: (callback: (data: { onBattery: boolean }) => void) => () => void
     setCalendarEvents?: (events: Array<{ id: string; title: string; start: number; end: number; joinLink?: string }>) => Promise<boolean>
-    updateTrayMeetingInfo?: (info: { title: string; startTime: number } | null) => Promise<void>
+    updateTrayMeetingInfo?: (info: { title: string; startTime: number; elapsedSeconds?: number } | null) => Promise<void>
   }
 }
 

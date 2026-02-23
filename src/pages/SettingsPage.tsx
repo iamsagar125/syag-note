@@ -411,13 +411,22 @@ export default function SettingsPage() {
   const [tempApiKey, setTempApiKey] = useState("");
   const [aiModelOpen, setAiModelOpen] = useState(false);
   const [sttModelOpen, setSttModelOpen] = useState(false);
+  const [appleFoundationAvailable, setAppleFoundationAvailable] = useState(false);
 
-  // Build AI model options (for searchable dropdown): local + connected providers, exclude whisper for supportsStt
+  useEffect(() => {
+    if (!api?.app?.appleFoundationAvailable || api.app.getPlatform?.() !== "darwin") return;
+    api.app.appleFoundationAvailable().then(setAppleFoundationAvailable).catch(() => setAppleFoundationAvailable(false));
+  }, [api]);
+
+  // Build AI model options (for searchable dropdown): local + Apple (darwin) + connected providers, exclude whisper for supportsStt
   const aiOptions = useMemo(() => {
     const out: { value: string; label: string; group: string }[] = [];
     localModels
       .filter((m) => m.type === "llm" && downloadStates[m.id] === "downloaded")
       .forEach((m) => out.push({ value: `local:${m.id}`, label: `${m.name} (Local)`, group: "Local Models" }));
+    if (appleFoundationAvailable) {
+      out.push({ value: "apple:default", label: "Apple Foundation (On-Device)", group: "Apple" });
+    }
     Object.entries(connectedProviders)
       .filter(([_, v]) => v.connected)
       .forEach(([pid]) => {
@@ -431,7 +440,7 @@ export default function SettingsPage() {
         );
       });
     return out;
-  }, [connectedProviders, downloadStates]);
+  }, [connectedProviders, downloadStates, appleFoundationAvailable]);
 
   // Build STT model options: local + system (darwin) + connected providers (sttOnly all, supportsStt whisper-only)
   const sttOptions = useMemo(() => {

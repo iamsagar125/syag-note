@@ -6,6 +6,7 @@ import { chatGoogle } from './google'
 import { sttDeepgram } from './deepgram'
 import { sttAssemblyAI } from './assemblyai'
 import { chatGroq, sttGroq } from './groq'
+import { chatApple } from './apple-llm'
 
 function getApiKey(providerId: string): string {
   const { safeStorage } = require('electron')
@@ -44,6 +45,10 @@ export async function routeLLM(
 ): Promise<string> {
   const [providerId, ...rest] = model.split(':')
   const modelName = rest.join(':')
+
+  if (providerId === 'apple') {
+    return chatApple(messages, modelName, onChunk)
+  }
 
   const apiKey = getApiKey(providerId)
 

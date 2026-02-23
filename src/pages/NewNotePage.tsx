@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, useParams } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { AskBar } from "@/components/AskBar";
 import { EditableSummary } from "@/components/EditableSummary";
@@ -112,6 +112,8 @@ function formatTime(seconds: number) {
 export default function NewNotePage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const params = useParams<{ id?: string }>();
+  const noteIdFromRoute = params.id ?? null;
   const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string; startFresh?: boolean; triggerPauseAndSummarize?: boolean } | null;
   const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture, setSessionScratch, getSessionScratch } = useRecording();
   const { selectedSTTModel, selectedAIModel } = useModelSettings();
@@ -122,9 +124,11 @@ export default function NewNotePage() {
   const isReturning = !!(existingSessionId && activeSession && activeSession.noteId === existingSessionId);
   const startFreshFromUrl = searchParams.get("startFresh") === "1";
   const startFresh = eventState?.startFresh === true || startFreshFromUrl;
+  const isSavedNoteView = Boolean(noteIdFromRoute);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [recordingState, setRecordingState] = useState<RecordingState>(() => {
+    if (noteIdFromRoute) return "stopped";
     if (isReturning && activeSession) {
       return activeSession.isRecording ? "recording" : "paused";
     }
@@ -150,10 +154,11 @@ export default function NewNotePage() {
   const templateMenuRef = useRef<HTMLDivElement>(null);
   const [showRealTimeTranscript, setShowRealTimeTranscript] = useState(true);
   const [autoGenerateNotes, setAutoGenerateNotes] = useState(true);
-  const [noteId, setNoteId] = useState(() => isReturning ? existingSessionId! : crypto.randomUUID());
+  const [noteId, setNoteId] = useState(() => noteIdFromRoute ?? (isReturning ? existingSessionId! : crypto.randomUUID()));
   useEffect(() => {
-    if (existingSessionId && noteId !== existingSessionId) setNoteId(existingSessionId);
-  }, [existingSessionId]);
+    if (noteIdFromRoute) setNoteId(noteIdFromRoute);
+    else if (existingSessionId && noteId !== existingSessionId) setNoteId(existingSessionId);
+  }, [noteIdFromRoute, existingSessionId]);
   const titleRef = useRef<HTMLInputElement>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -164,7 +169,8 @@ export default function NewNotePage() {
   const triggeredPauseAndSummarizeRef = useRef(false);
   const lastStartFreshKeyRef = useRef<string | null>(null);
   const { folders, createFolder } = useFolders();
-  const { addNote, deleteNote } = useNotes();
+  const { notes, addNote, updateNote, deleteNote } = useNotes();
+  const savedNote = notes.find((n) => n.id === noteId) ?? null;
   const [customTemplates, setCustomTemplates] = useState<Array<{ id: string; name: string; prompt: string }>>([]);
 
   const MEETING_TEMPLATES = useMemo(() => {
@@ -191,12 +197,43 @@ export default function NewNotePage() {
     }).catch(() => {});
   }, []);
 
-  const usingRealAudio = isElectron;
+  const usingRealAudio = isElectron && !isSavedNoteView;
   const elapsedSeconds = activeSession?.elapsedSeconds ?? 0;
-  const currentTranscript = usingRealAudio ? transcriptLines : fakeTranscriptLines.slice(0, visibleLines);
+  const currentTranscript = isSavedNoteView && savedNote?.transcript?.length
+    ? savedNote.transcript
+    : (usingRealAudio ? transcriptLines : fakeTranscriptLines.slice(0, visibleLines));
 
   useEffect(() => { transcriptRef.current = transcriptLines; }, [transcriptLines]);
+  useEffect(() => {
+    if (isSavedNoteView && savedNote?.transcript?.length) transcriptRef.current = savedNote.transcript;
+  }, [isSavedNoteView, savedNote?.transcript]);
+
+  // If we're viewing a saved note by id but it doesn't exist (e.g. deleted), go home
+  useEffect(() => {
+    if (!isSavedNoteView || !noteId) return;
+    if (notes.length === 0) return;
+    if (!savedNote) navigate("/", { replace: true });
+  }, [isSavedNoteView, noteId, notes.length, savedNote, navigate]);
   useEffect(() => { meetingTemplateRef.current = meetingTemplate; }, [meetingTemplate]);
+
+  // When navigating to this note page (e.g. "Go to note" from indicator or opening /note/:id), hydrate from saved note
+  useEffect(() => {
+    if (!noteId || !notes.length) return;
+    const note = notes.find((n) => n.id === noteId);
+    if (!note) return;
+    if (isSavedNoteView) {
+      setSummary(note.summary ? { overview: note.summary.overview, keyPoints: note.summary.keyPoints ?? [], nextSteps: note.summary.nextSteps ?? [] } : null);
+      setTitle(note.title ?? "");
+      setPersonalNotes(note.personalNotes ?? "");
+      setSelectedFolderId(note.folderId ?? null);
+      return;
+    }
+    if (summary != null) return;
+    if (!note.summary) return;
+    setSummary({ overview: note.summary.overview, keyPoints: note.summary.keyPoints ?? [], nextSteps: note.summary.nextSteps ?? [] });
+    if (note.title) setTitle(note.title);
+    if (note.personalNotes) setPersonalNotes(note.personalNotes);
+  }, [noteId, notes, summary, isSavedNoteView]);
 
   // Sync personalNotes and title to session scratch so indicator pause-and-summarize can restore when navigating back
   useEffect(() => {
@@ -256,13 +293,13 @@ export default function NewNotePage() {
         addNote({
           id: noteId,
           title: generatedSummary.title || noteTitle,
-          date: dateStr,
-          time: timeStr,
-          duration: formatTime(elapsedSeconds),
+          date: savedNote?.date ?? dateStr,
+          time: savedNote?.time ?? timeStr,
+          duration: savedNote?.duration ?? formatTime(elapsedSeconds),
           personalNotes: useNotes,
           transcript: finalTranscript,
           summary: generatedSummary,
-          folderId: selectedFolderId,
+          folderId: isSavedNoteView ? (savedNote?.folderId ?? selectedFolderId) : selectedFolderId,
         });
       } catch (err) {
         console.error('Failed to save note:', err);
@@ -274,7 +311,7 @@ export default function NewNotePage() {
     } finally {
       setIsSummarizing(false);
     }
-  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, isSummarizing]);
+  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, isSummarizing, isSavedNoteView, savedNote]);
 
   // When indicator triggered "pause and summarize", we land here with state; run generateNotes with scratch and clear state
   useEffect(() => {
@@ -299,6 +336,7 @@ export default function NewNotePage() {
   const selectedFolder = (folders ?? []).find((f) => f.id === selectedFolderId);
 
   useEffect(() => {
+    if (noteIdFromRoute) return;
     try {
       // User explicitly chose "New note" / "Quick Note": stop previous session, run summary for it, then start fresh
       if (startFresh) {
@@ -368,7 +406,7 @@ export default function NewNotePage() {
       console.error("NewNotePage mount error:", err);
     }
     return () => {};
-  }, [location.key, startFresh]);
+  }, [location.key, startFresh, noteIdFromRoute]);
 
   // Keep the session title synced with local title state
   useEffect(() => {
@@ -466,7 +504,7 @@ export default function NewNotePage() {
   const handleViewModeChange = useCallback(async (mode: "my-notes" | "ai-notes") => {
     if (mode === "ai-notes" && viewMode === "my-notes") {
       setIsSummarizing(true);
-      const finalTranscript = usingRealAudio ? transcriptLines : fakeTranscriptLines;
+      const finalTranscript = isSavedNoteView ? transcriptRef.current : (usingRealAudio ? transcriptLines : fakeTranscriptLines);
 
       if (api && selectedAIModel) {
         try {
@@ -492,7 +530,7 @@ export default function NewNotePage() {
       setIsSummarizing(false);
     }
     setViewMode(mode);
-  }, [viewMode, personalNotes, api, selectedAIModel, usingRealAudio, transcriptLines, meetingTemplate]);
+  }, [viewMode, personalNotes, api, selectedAIModel, usingRealAudio, transcriptLines, meetingTemplate, isSavedNoteView]);
 
   const handleCreateAndAssign = () => {
     if (newFolderName.trim()) {
@@ -529,17 +567,23 @@ export default function NewNotePage() {
       ...summary.nextSteps.map((s) => `${s.done ? "✓" : "○"} ${s.text} — ${s.assignee}`),
     ].join("\n");
     navigator.clipboard.writeText(text);
+    toast.success("Copied to clipboard");
     setShowMoreMenu(false);
   };
 
+  const handleShare = () => {
+    handleCopyText();
+  };
+
   const handleDeleteNote = () => {
+    setShowMoreMenu(false);
     deleteNote(noteId);
     navigate("/");
   };
 
   const elapsed = formatTime(elapsedSeconds);
   const isStopped = recordingState === "stopped";
-  const showSummaryPanel = (recordingState === "paused" || recordingState === "stopped") && (summary || isSummarizing);
+  const showSummaryPanel = ((recordingState === "paused" || recordingState === "stopped") && (summary || isSummarizing)) || (isSavedNoteView && !!savedNote);
 
   const folderChip = (
     <>
@@ -685,7 +729,7 @@ export default function NewNotePage() {
                   <RefreshCw className={cn("h-3.5 w-3.5", isSummarizing && "animate-spin")} />
                 </button>
               </div>
-              <button className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+              <button onClick={handleShare} className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" title="Copy summary">
                 <Share2 className="h-3.5 w-3.5" />
               </button>
               <div ref={moreMenuRef} className="relative">
@@ -745,7 +789,10 @@ export default function NewNotePage() {
                     ref={titleRef}
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    onBlur={() => setIsEditingTitle(false)}
+                    onBlur={() => {
+                      setIsEditingTitle(false);
+                      if (isSavedNoteView && noteId) updateNote(noteId, { title: (title || "").trim() || "New note" });
+                    }}
                     onKeyDown={(e) => e.key === "Enter" && setIsEditingTitle(false)}
                     className="mb-3 w-full font-display text-2xl text-foreground bg-transparent border-none outline-none focus:ring-0"
                     placeholder="New note"
@@ -766,12 +813,12 @@ export default function NewNotePage() {
                 <div className="flex items-center gap-2 mb-6 flex-wrap relative">
                   <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
                     <Calendar className="h-3 w-3" />
-                    Today
+                    {isSavedNoteView && savedNote?.date ? savedNote.date : "Today"}
                   </span>
                   {showSummaryPanel && (
                     <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
                       <Clock className="h-3 w-3" />
-                      {elapsed}
+                      {isSavedNoteView && savedNote ? `${savedNote.time} · ${savedNote.duration}` : elapsed}
                     </span>
                   )}
                   <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
@@ -786,6 +833,7 @@ export default function NewNotePage() {
                   <textarea
                     value={personalNotes}
                     onChange={(e) => setPersonalNotes(e.target.value)}
+                    onBlur={() => { if (isSavedNoteView && noteId) updateNote(noteId, { personalNotes }); }}
                     placeholder="Write notes..."
                     className="min-h-[60vh] w-full resize-none bg-transparent text-[17px] font-medium text-foreground leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none"
                     autoFocus
@@ -796,6 +844,7 @@ export default function NewNotePage() {
                       <textarea
                         value={personalNotes}
                         onChange={(e) => setPersonalNotes(e.target.value)}
+                        onBlur={() => { if (isSavedNoteView && noteId) updateNote(noteId, { personalNotes }); }}
                         placeholder="Add your personal notes..."
                         className="min-h-[40vh] w-full resize-none bg-transparent text-[17px] font-medium text-foreground leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none"
                         autoFocus
@@ -846,7 +895,10 @@ export default function NewNotePage() {
                     ) : (
                       <EditableSummary
                         summary={summary}
-                        onUpdate={(updated) => setSummary(updated)}
+                        onUpdate={(updated) => {
+                          setSummary(updated);
+                          if (isSavedNoteView && noteId) updateNote(noteId, { summary: updated });
+                        }}
                       />
                     )}
                   </div>

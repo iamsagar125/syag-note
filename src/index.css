@@ -113,9 +113,14 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
   h1, h2, h3, h4 {
     font-family: 'DM Serif Display', serif;
+  }
+  /* Granola-style: consistent readable body for notes and chat */
+  .prose, .summary-content, [data-summary] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   }
 }
 
