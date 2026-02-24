@@ -3,12 +3,11 @@ import { useNavigate, useLocation, useParams } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { AskBar } from "@/components/AskBar";
 import { EditableSummary } from "@/components/EditableSummary";
-import { NotesViewToggle } from "@/components/NotesViewToggle";
 import {
   Mic, MicOff, Pause, Play, Eye, EyeOff, Square, Search,
   PanelLeftClose, PanelLeft, Share2, MoreHorizontal,
   Calendar, Clock, Plus, FolderOpen, Check, X, Hash,
-  CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown
+  CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, RefreshCw
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFolders } from "@/contexts/FolderContext";
@@ -107,6 +106,31 @@ function formatTime(seconds: number) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Parse duration string "m:ss" or "mm:ss" to seconds */
+function parseDurationToSeconds(duration: string): number {
+  const parts = duration.trim().split(":");
+  if (parts.length < 2) return 0;
+  const m = parseInt(parts[0], 10) || 0;
+  const s = parseInt(parts[1], 10) || 0;
+  return m * 60 + s;
+}
+
+/** Format note time as "start – end" in device locale (e.g. "11:05 AM – 11:12 AM") */
+function formatStartEndTime(dateStr: string, timeStr: string, durationStr: string): string {
+  try {
+    const startDate = new Date(`${dateStr} ${timeStr}`);
+    if (Number.isNaN(startDate.getTime())) return `${timeStr} · ${durationStr}`;
+    const secs = parseDurationToSeconds(durationStr);
+    const endDate = new Date(startDate.getTime() + secs * 1000);
+    const opts: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit", hour12: true };
+    const start = startDate.toLocaleTimeString(undefined, opts);
+    const end = endDate.toLocaleTimeString(undefined, opts);
+    return `${start} – ${end}`;
+  } catch {
+    return `${timeStr} · ${durationStr}`;
+  }
 }
 
 export default function NewNotePage() {
@@ -236,6 +260,7 @@ export default function NewNotePage() {
   useEffect(() => { meetingTemplateRef.current = meetingTemplate; }, [meetingTemplate]);
 
   // When navigating to this note page (e.g. "Go to note" from indicator or opening /note/:id), hydrate from saved note
+  // Keep summary/title/personalNotes in sync with the current note (avoids showing old summary when note updates)
   useEffect(() => {
     if (!noteId || !notes.length) return;
     const note = notes.find((n) => n.id === noteId);
@@ -274,7 +299,7 @@ export default function NewNotePage() {
     });
     if (note.title) setTitle(note.title);
     if (note.personalNotes) setPersonalNotes(note.personalNotes);
-  }, [noteId, notes, summary, isSavedNoteView]);
+  }, [noteId, notes, isSavedNoteView, summary]);
 
   // Sync personalNotes and title to session scratch so indicator pause-and-summarize can restore when navigating back
   useEffect(() => {
@@ -604,6 +629,7 @@ export default function NewNotePage() {
       setNewFolderName("");
       setCreatingFolder(false);
       setShowFolderPicker(false);
+      if (noteId) updateNote(noteId, { folderId: folder.id });
     }
   };
 
@@ -617,7 +643,7 @@ export default function NewNotePage() {
     return () => document.removeEventListener("mousedown", handler);
   }, [showMoreMenu, showTemplateMenu]);
 
-  const handleCopyText = () => {
+  const handleCopyText = async () => {
     if (!summary) return;
     const keyPoints = summary.keyPoints ?? [];
     const nextSteps = summary.nextSteps ?? summary.actionItems ?? [];
@@ -633,8 +659,12 @@ export default function NewNotePage() {
       "## Next Steps",
       ...nextSteps.map((s) => `${s.done ? "✓" : "○"} ${s.text} — ${s.assignee}`),
     ].join("\n");
-    navigator.clipboard.writeText(text);
-    toast.success("Copied to clipboard");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Copy failed");
+    }
     setShowMoreMenu(false);
   };
 
@@ -663,7 +693,11 @@ export default function NewNotePage() {
           {selectedFolder.name}
           <X
             className="h-3 w-3 text-muted-foreground hover:text-foreground ml-0.5"
-            onClick={(e) => { e.stopPropagation(); setSelectedFolderId(null); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedFolderId(null);
+              if (noteId) updateNote(noteId, { folderId: null });
+            }}
           />
         </button>
       ) : (
@@ -685,7 +719,11 @@ export default function NewNotePage() {
             {(folders ?? []).map((f) => (
               <button
                 key={f.id}
-                onClick={() => { setSelectedFolderId(f.id); setShowFolderPicker(false); }}
+                onClick={() => {
+                  setSelectedFolderId(f.id);
+                  setShowFolderPicker(false);
+                  if (noteId) updateNote(noteId, { folderId: f.id });
+                }}
                 className="flex w-full items-center gap-2.5 px-3 py-1.5 text-xs text-foreground hover:bg-secondary transition-colors"
               >
                 <FolderOpen className="h-3 w-3 text-accent" />
@@ -843,52 +881,106 @@ export default function NewNotePage() {
                   {showSummaryPanel && (
                     <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
                       <Clock className="h-3 w-3" />
-                      {isSavedNoteView && savedNote ? `${savedNote.time} · ${savedNote.duration}` : elapsed}
+                      {isSavedNoteView && savedNote?.date && savedNote?.time && savedNote?.duration
+                        ? formatStartEndTime(savedNote.date, savedNote.time, savedNote.duration)
+                        : isSavedNoteView && savedNote?.time
+                          ? savedNote.time
+                          : !isSavedNoteView
+                            ? elapsed
+                            : "—"}
                     </span>
                   )}
                   {folderChip}
                   {showSummaryPanel && (
-                    <div className="flex items-center rounded-full border border-border bg-card overflow-hidden">
-                      <NotesViewToggle viewMode={viewMode} onViewModeChange={handleViewModeChange} />
-                      <div ref={templateMenuRef} className="relative flex">
+                    <div className="flex items-center gap-2">
+                      {/* Single extended bar: hamburger | sparkles | template dropdown */}
+                      <div className="flex items-center rounded-full border border-border bg-card overflow-hidden">
                         <button
-                          onClick={(e) => { e.stopPropagation(); setShowTemplateMenu(!showTemplateMenu); }}
+                          onClick={() => handleViewModeChange("my-notes")}
                           className={cn(
-                            "flex items-center gap-1 px-2.5 py-1.5 text-[12px] transition-colors",
+                            "flex items-center justify-center p-2 transition-colors",
+                            viewMode === "my-notes"
+                              ? "bg-secondary text-foreground"
+                              : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                          )}
+                          title="My notes only"
+                        >
+                          <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                            <rect x="2" y="3" width="12" height="1.5" rx="0.75" />
+                            <rect x="2" y="7.25" width="12" height="1.5" rx="0.75" />
+                            <rect x="2" y="11.5" width="12" height="1.5" rx="0.75" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => handleViewModeChange("ai-notes")}
+                          className={cn(
+                            "flex items-center justify-center p-2 transition-colors border-l border-border",
                             viewMode === "ai-notes"
                               ? "bg-secondary text-foreground"
-                              : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                              : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
                           )}
-                          title="Template"
+                          title="AI notes + my notes"
                         >
-                          <span>{MEETING_TEMPLATES.find((t) => t.id === meetingTemplate)?.icon ?? "📋"}</span>
-                          <span className="max-w-[80px] truncate">{MEETING_TEMPLATES.find((t) => t.id === meetingTemplate)?.name ?? "General"}</span>
-                          <ChevronDown className={cn("h-3 w-3 transition-transform", showTemplateMenu && "rotate-180")} />
+                          <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M8 1l1.3 3.7L13 6l-3.7 1.3L8 11l-1.3-3.7L3 6l3.7-1.3L8 1z" />
+                            <path d="M12 9l.7 2L15 12l-2.3.7-.7 2-.7-2L9 12l2.3-.7.7-2z" />
+                          </svg>
                         </button>
-                        {showTemplateMenu && (
-                          <div className="absolute right-0 top-full mt-1 w-52 rounded-lg border border-border bg-popover shadow-lg z-50 overflow-hidden py-1">
-                            {MEETING_TEMPLATES.map((t) => (
-                              <button
-                                key={t.id}
-                                onClick={() => {
-                                  setMeetingTemplate(t.id);
-                                  meetingTemplateRef.current = t.id;
-                                  setShowTemplateMenu(false);
-                                  handleViewModeChange("ai-notes");
-                                  generateNotes();
-                                }}
-                                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] text-foreground hover:bg-secondary transition-colors"
-                              >
-                                <span className="flex items-center gap-2">
-                                  <span>{t.icon}</span>
-                                  <span>{t.name}</span>
-                                </span>
-                                {meetingTemplate === t.id && <Check className="h-3.5 w-3.5 text-accent flex-shrink-0" />}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                        <div ref={templateMenuRef} className={cn(
+                          "relative flex border-l border-border",
+                          viewMode === "ai-notes" ? "bg-secondary" : "bg-transparent"
+                        )}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setShowTemplateMenu(!showTemplateMenu); handleViewModeChange("ai-notes"); }}
+                            className={cn(
+                              "flex items-center gap-1 pl-2 pr-2.5 py-1.5 text-[12px] transition-colors rounded-r-full",
+                              viewMode === "ai-notes"
+                                ? "bg-secondary text-foreground hover:bg-secondary/80"
+                                : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+                            )}
+                            title="Template"
+                          >
+                            <span>{MEETING_TEMPLATES.find((t) => t.id === meetingTemplate)?.icon ?? "📋"}</span>
+                            <span className="max-w-[88px] truncate">{MEETING_TEMPLATES.find((t) => t.id === meetingTemplate)?.name ?? "General"}</span>
+                            <ChevronDown className={cn("h-3 w-3 transition-transform flex-shrink-0", showTemplateMenu && "rotate-180")} />
+                          </button>
+                          {showTemplateMenu && (
+                            <div className="absolute left-0 right-0 top-full mt-1 rounded-lg border border-border bg-popover shadow-lg z-50 overflow-hidden py-1 min-w-[10rem]">
+                              {MEETING_TEMPLATES.map((t) => (
+                                <button
+                                  key={t.id}
+                                  onClick={() => {
+                                    setMeetingTemplate(t.id);
+                                    meetingTemplateRef.current = t.id;
+                                    setShowTemplateMenu(false);
+                                    handleViewModeChange("ai-notes");
+                                  }}
+                                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] text-foreground hover:bg-secondary transition-colors"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <span>{t.icon}</span>
+                                    <span>{t.name}</span>
+                                  </span>
+                                  {meetingTemplate === t.id && <Check className="h-3.5 w-3.5 text-accent flex-shrink-0" />}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </div>
+                      {/* Sync: run summary with selected template when not General */}
+                      {meetingTemplate !== "general" && viewMode === "ai-notes" && (
+                        <button
+                          type="button"
+                          onClick={() => generateNotes()}
+                          disabled={isSummarizing}
+                          className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+                          title="Run summary with this template"
+                        >
+                          {isSummarizing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                          Sync
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -900,20 +992,41 @@ export default function NewNotePage() {
                     onChange={(e) => setPersonalNotes(e.target.value)}
                     onBlur={() => { if (isSavedNoteView && noteId) updateNote(noteId, { personalNotes }); }}
                     placeholder="Write notes..."
-                    className="min-h-[60vh] w-full resize-none bg-transparent text-[17px] font-normal text-foreground leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none"
+                    className="min-h-[60vh] w-full resize-none bg-transparent text-[17px] font-normal text-foreground leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none select-text"
                     autoFocus
                   />
                 ) : (
                   <div className="animate-fade-in">
                     {viewMode === "my-notes" ? (
-                      <textarea
-                        value={personalNotes}
-                        onChange={(e) => setPersonalNotes(e.target.value)}
-                        onBlur={() => { if (isSavedNoteView && noteId) updateNote(noteId, { personalNotes }); }}
-                        placeholder="Add your personal notes..."
-                        className="min-h-[40vh] w-full resize-none bg-transparent text-[17px] font-normal text-foreground leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none"
-                        autoFocus
-                      />
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-[13px] font-medium text-muted-foreground">Personal notes</span>
+                          {personalNotes.trim().length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPersonalNotes("");
+                                if (noteId) updateNote(noteId, { personalNotes: "" });
+                                generateNotes({ personalNotes: "" }).catch((err) => {
+                                  console.error("Summary failed:", err);
+                                  toast.error("Summary failed. Try again.");
+                                });
+                              }}
+                              className="text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                              Clear & re-run summary
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          value={personalNotes}
+                          onChange={(e) => setPersonalNotes(e.target.value)}
+                          onBlur={() => { if (isSavedNoteView && noteId) updateNote(noteId, { personalNotes }); }}
+                          placeholder="Add your personal notes..."
+                          className="min-h-[40vh] w-full resize-none bg-transparent text-[17px] font-normal text-foreground leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none select-text"
+                          autoFocus
+                        />
+                      </div>
                     ) : isSummarizing ? (
                       <div className="space-y-8 py-4">
                         <div>
@@ -958,13 +1071,15 @@ export default function NewNotePage() {
                         <p className="text-xs text-muted-foreground text-center animate-pulse">Generating summary...</p>
                       </div>
                     ) : summary != null ? (
-                      <EditableSummary
-                        summary={summary}
-                        onUpdate={(updated) => {
-                          setSummary(updated);
-                          if (isSavedNoteView && noteId) updateNote(noteId, { summary: updated });
-                        }}
-                      />
+                      <div className="select-text">
+                        <EditableSummary
+                          summary={summary}
+                          onUpdate={(updated) => {
+                            setSummary(updated);
+                            if (isSavedNoteView && noteId) updateNote(noteId, { summary: updated });
+                          }}
+                        />
+                      </div>
                     ) : (
                       <p className="text-sm text-muted-foreground py-8 text-center">No summary for this note. Switch to My notes to add content, or generate a summary from a recording.</p>
                     )}

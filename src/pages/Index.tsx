@@ -1,12 +1,13 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteCardMenu } from "@/components/NoteCardMenu";
-import { Plus, FolderOpen, ArrowLeft, FileText, PanelRight, PanelRightClose } from "lucide-react";
+import { Plus, FolderOpen, ArrowLeft, FileText, PanelRight, PanelRightClose, PanelLeft, PanelLeftClose } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AskBar } from "@/components/AskBar";
 import { useFolders } from "@/contexts/FolderContext";
 import { useNotes } from "@/contexts/NotesContext";
 import { useCalendar } from "@/contexts/CalendarContext";
+import { isElectron } from "@/lib/electron-api";
 import { ICSDialog } from "@/components/ICSDialog";
 import { HomeShelf, getShelfOpenDefault, setShelfOpenPersist } from "@/components/HomeShelf";
 import { ActionItemsThisWeek, type ManualActionItem } from "@/components/ActionItemsThisWeek";
@@ -32,14 +33,14 @@ function saveManualActionItems(items: ManualActionItem[]) {
 
 const Index = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { folders } = useFolders();
   const { notes, deleteNote, updateNoteFolder, updateNote } = useNotes();
   const { events, icsSource } = useCalendar();
   const [icsOpen, setIcsOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [shelfOpen, setShelfOpenState] = useState(getShelfOpenDefault);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const searchQuery = searchParams.get("q") ?? "";
   const [manualActionItems, setManualActionItems] = useState<ManualActionItem[]>(() => loadManualActionItems());
 
@@ -123,11 +124,23 @@ const Index = () => {
   if (activeFolder) {
     return (
       <div className="flex h-screen overflow-hidden bg-background">
-        <Sidebar />
-        <main className="flex flex-1 flex-col min-w-0 relative">
+        <div className={cn(
+          "transition-all duration-300 ease-in-out overflow-hidden flex-shrink-0",
+          sidebarOpen ? "w-56" : "w-0"
+        )}>
+          <Sidebar />
+        </div>
+        <main className={cn("flex flex-1 flex-col min-w-0 relative", !sidebarOpen && isElectron && "pl-20")}>
           <div className="flex-1 overflow-y-auto pb-24">
             <div className="mx-auto max-w-2xl px-6 py-8">
               <div className="flex items-center gap-3 mb-6">
+                <button
+                  onClick={() => setSidebarOpen(!sidebarOpen)}
+                  className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                  title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+                >
+                  {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
+                </button>
                 <button
                   onClick={() => navigate("/")}
                   className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
@@ -190,9 +203,21 @@ const Index = () => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      <main className="flex flex-1 flex-col min-w-0 relative">
+      <div className={cn(
+        "transition-all duration-300 ease-in-out overflow-hidden flex-shrink-0",
+        sidebarOpen ? "w-56" : "w-0"
+      )}>
+        <Sidebar />
+      </div>
+      <main className={cn("flex flex-1 flex-col min-w-0 relative", !sidebarOpen && isElectron && "pl-20")}>
         <div className="flex items-center justify-end gap-1 px-4 pt-3 pb-0">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+            title={sidebarOpen ? "Hide sidebar" : "Show sidebar"}
+          >
+            {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
+          </button>
           <button
             onClick={() => setShelfOpen(!shelfOpen)}
             className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
@@ -283,7 +308,7 @@ const Index = () => {
         </div>
       </main>
       {shelfOpen && (
-        <div className="w-80 flex-shrink-0 flex flex-col h-full overflow-y-auto border-l border-border bg-card/30">
+        <div className="w-96 flex-shrink-0 flex flex-col h-full overflow-y-auto border-l border-border bg-card/30">
           <div className="p-4 space-y-6 flex flex-col">
           <HomeShelf
             upcomingEvents={upcomingEvents}

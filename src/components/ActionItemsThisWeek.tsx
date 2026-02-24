@@ -169,12 +169,9 @@ export function ActionItemsThisWeek({
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-2 px-4 py-2 bg-muted/30 border-b border-border text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+            <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 px-4 py-2 bg-muted/30 border-b border-border text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
               <span className="w-8" aria-hidden />
               <span>Tasks</span>
-              <span className="min-w-[6rem]">Deadline</span>
-              <span className="w-8" aria-hidden />
-              <span className="w-8" aria-hidden />
             </div>
             <div className="divide-y divide-border">
               {allItems.map(({ key, source, item }) => {
@@ -191,77 +188,78 @@ export function ActionItemsThisWeek({
                 return (
                   <div
                     key={key}
-                    className="grid grid-cols-[auto_1fr_auto_auto_auto] gap-2 items-center px-4 py-2.5 group"
+                    className="px-4 py-2.5 group"
                   >
-                    <button
-                      type="button"
-                      onClick={() => (isNote ? handleToggle(noteItem!) : handleToggleManual(manualItem!))}
-                      className="flex-shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground transition-colors"
-                      aria-label={done ? "Mark undone" : "Mark done"}
-                      title={done ? "Done" : "Pending"}
-                    >
-                      {done ? (
-                        <Check className="h-4 w-4 text-accent" />
-                      ) : (
-                        <Circle className="h-4 w-4" />
-                      )}
-                    </button>
-                    <div className="min-w-0 flex flex-col gap-0.5">
-                      {isEditing ? (
-                        <input
-                          autoFocus
-                          value={editText}
-                          onChange={(e) => setEditText(e.target.value)}
-                          onBlur={() => (isNote ? handleSaveEdit(noteItem!) : handleSaveEditManual(manualItem!))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") isNote ? handleSaveEdit(noteItem!) : handleSaveEditManual(manualItem!);
-                            if (e.key === "Escape") setEditingKey(null);
-                          }}
-                          className="w-full text-sm text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-ring"
-                        />
-                      ) : (
-                        <span
-                          className={`text-sm ${done ? "line-through text-muted-foreground" : "text-foreground"}`}
-                        >
-                          {text}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 min-w-0">
-                      <input
-                        type="date"
-                        value={dueDate && dueDate.includes("-") ? dueDate : ""}
-                        onChange={(e) =>
-                          isNote ? handleDueDateChange(noteItem!, e.target.value) : handleDueDateChangeManual(manualItem!, e.target.value)
-                        }
-                        className="text-[12px] bg-transparent border border-border rounded px-2 py-1 max-w-[8rem] text-foreground focus:ring-1 focus:ring-ring outline-none"
-                        title="Deadline"
-                      />
-                      {displayDue && (!dueDate || !dueDate.includes("-")) && (
-                        <span className="text-[11px] text-muted-foreground truncate">{displayDue}</span>
-                      )}
-                    </div>
-                    {!isEditing && (
+                    <div className="flex gap-2 items-start min-w-0">
                       <button
                         type="button"
-                        onClick={() => (isNote ? handleStartEdit(noteItem!) : handleStartEditManual(manualItem!))}
-                        className="flex-shrink-0 p-1 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground transition-opacity"
-                        aria-label="Edit"
+                        onClick={() => (isNote ? handleToggle(noteItem!) : handleToggleManual(manualItem!))}
+                        className="flex-shrink-0 rounded p-0.5 mt-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                        aria-label={done ? "Mark undone" : "Mark done"}
+                        title={done ? "Done" : "Pending"}
                       >
-                        <Pencil className="h-3.5 w-3.5" />
+                        {done ? (
+                          <Check className="h-4 w-4 text-accent" />
+                        ) : (
+                          <Circle className="h-4 w-4" />
+                        )}
                       </button>
-                    )}
-                    {!isNote && onRemoveManual && (
-                      <button
-                        type="button"
-                        onClick={() => onRemoveManual(manualItem!.id)}
-                        className="flex-shrink-0 p-1 rounded text-muted-foreground hover:text-destructive transition-colors"
-                        aria-label="Remove"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    {isNote && <span className="w-8" />}
+                      <div className="min-w-0 flex-1 flex flex-col gap-1.5">
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            value={editText}
+                            onChange={(e) => setEditText(e.target.value)}
+                            onBlur={() => (isNote ? handleSaveEdit(noteItem!) : handleSaveEditManual(manualItem!))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") isNote ? handleSaveEdit(noteItem!) : handleSaveEditManual(manualItem!);
+                              if (e.key === "Escape") setEditingKey(null);
+                            }}
+                            className="w-full text-sm text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-ring"
+                          />
+                        ) : (
+                          <span
+                            className={`text-sm break-words ${done ? "line-through text-muted-foreground" : "text-foreground"}`}
+                          >
+                            {text}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <input
+                            type="date"
+                            value={dueDate && dueDate.includes("-") ? dueDate : ""}
+                            onChange={(e) =>
+                              isNote ? handleDueDateChange(noteItem!, e.target.value) : handleDueDateChangeManual(manualItem!, e.target.value)
+                            }
+                            className="text-[12px] bg-transparent border border-border rounded px-2 py-1 w-[8.5rem] text-foreground focus:ring-1 focus:ring-ring outline-none"
+                            title="Deadline"
+                          />
+                          {displayDue && (!dueDate || !dueDate.includes("-")) && (
+                            <span className="text-[11px] text-muted-foreground">{displayDue}</span>
+                          )}
+                          {!isEditing && (
+                            <button
+                              type="button"
+                              onClick={() => (isNote ? handleStartEdit(noteItem!) : handleStartEditManual(manualItem!))}
+                              className="flex-shrink-0 p-1 rounded text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground transition-opacity"
+                              aria-label="Edit"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          {!isNote && onRemoveManual && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveManual(manualItem!.id)}
+                              className="flex-shrink-0 p-1 rounded text-muted-foreground hover:text-destructive transition-colors"
+                              aria-label="Remove"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
