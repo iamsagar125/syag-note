@@ -222,7 +222,9 @@ export default function NewNotePage() {
     const note = notes.find((n) => n.id === noteId);
     if (!note) return;
     if (isSavedNoteView) {
-      setSummary(note.summary ? { overview: note.summary.overview, keyPoints: note.summary.keyPoints ?? [], nextSteps: note.summary.nextSteps ?? [] } : null);
+      const s = note.summary;
+      const steps = s?.nextSteps ?? (s && "actionItems" in s ? (s as { actionItems: { text: string; assignee: string; done: boolean; dueDate?: string }[] }).actionItems : []);
+      setSummary(s ? { overview: s.overview, keyPoints: s.keyPoints ?? [], nextSteps: steps } : null);
       setTitle(note.title ?? "");
       setPersonalNotes(note.personalNotes ?? "");
       setSelectedFolderId(note.folderId ?? null);
@@ -230,7 +232,9 @@ export default function NewNotePage() {
     }
     if (summary != null) return;
     if (!note.summary) return;
-    setSummary({ overview: note.summary.overview, keyPoints: note.summary.keyPoints ?? [], nextSteps: note.summary.nextSteps ?? [] });
+    const s = note.summary;
+    const steps = s.nextSteps ?? (s && "actionItems" in s ? (s as { actionItems: { text: string; assignee: string; done: boolean; dueDate?: string }[] }).actionItems : []);
+    setSummary({ overview: s.overview, keyPoints: s.keyPoints ?? [], nextSteps: steps });
     if (note.title) setTitle(note.title);
     if (note.personalNotes) setPersonalNotes(note.personalNotes);
   }, [noteId, notes, summary, isSavedNoteView]);
@@ -562,6 +566,8 @@ export default function NewNotePage() {
 
   const handleCopyText = () => {
     if (!summary) return;
+    const keyPoints = summary.keyPoints ?? [];
+    const nextSteps = summary.nextSteps ?? summary.actionItems ?? [];
     const text = [
       `# ${title}`,
       "",
@@ -569,10 +575,10 @@ export default function NewNotePage() {
       summary.overview,
       "",
       "## Key Points",
-      ...summary.keyPoints.map((p) => `• ${p}`),
+      ...keyPoints.map((p) => `• ${p}`),
       "",
       "## Next Steps",
-      ...summary.nextSteps.map((s) => `${s.done ? "✓" : "○"} ${s.text} — ${s.assignee}`),
+      ...nextSteps.map((s) => `${s.done ? "✓" : "○"} ${s.text} — ${s.assignee}`),
     ].join("\n");
     navigator.clipboard.writeText(text);
     toast.success("Copied to clipboard");
@@ -900,7 +906,7 @@ export default function NewNotePage() {
                         </div>
                         <p className="text-xs text-muted-foreground text-center animate-pulse">Generating summary...</p>
                       </div>
-                    ) : (
+                    ) : summary != null ? (
                       <EditableSummary
                         summary={summary}
                         onUpdate={(updated) => {
@@ -908,6 +914,8 @@ export default function NewNotePage() {
                           if (isSavedNoteView && noteId) updateNote(noteId, { summary: updated });
                         }}
                       />
+                    ) : (
+                      <p className="text-sm text-muted-foreground py-8 text-center">No summary for this note. Switch to My notes to add content, or generate a summary from a recording.</p>
                     )}
                   </div>
                 )}

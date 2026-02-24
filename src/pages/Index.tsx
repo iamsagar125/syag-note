@@ -1,7 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteCardMenu } from "@/components/NoteCardMenu";
-import { Plus, FolderOpen, ArrowLeft, FileText, PanelRight, PanelRightClose } from "lucide-react";
+import { Plus, FolderOpen, ArrowLeft, FileText, PanelRight, PanelRightClose, Search } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AskBar } from "@/components/AskBar";
 import { useFolders } from "@/contexts/FolderContext";
@@ -9,9 +9,26 @@ import { useNotes } from "@/contexts/NotesContext";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { ICSDialog } from "@/components/ICSDialog";
 import { HomeShelf, getShelfOpenDefault, setShelfOpenPersist } from "@/components/HomeShelf";
-import { ActionItemsThisWeek } from "@/components/ActionItemsThisWeek";
+import { ActionItemsThisWeek, type ManualActionItem } from "@/components/ActionItemsThisWeek";
 import { CalendarEvent } from "@/lib/ics-parser";
-import { isAfter } from "date-fns";
+import { addDays, isSameDay } from "date-fns";
+
+const MANUAL_ACTION_ITEMS_KEY = "syag-manual-action-items";
+
+function loadManualActionItems(): ManualActionItem[] {
+  try {
+    const raw = localStorage.getItem(MANUAL_ACTION_ITEMS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveManualActionItems(items: ManualActionItem[]) {
+  try {
+    localStorage.setItem(MANUAL_ACTION_ITEMS_KEY, JSON.stringify(items));
+  } catch {}
+}
 
 const Index = () => {
   const navigate = useNavigate();
@@ -22,6 +39,9 @@ const Index = () => {
   const [icsOpen, setIcsOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [shelfOpen, setShelfOpenState] = useState(getShelfOpenDefault);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [manualActionItems, setManualActionItems] = useState<ManualActionItem[]>(() => loadManualActionItems());
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const setShelfOpen = (open: boolean) => {
     setShelfOpenState(open);
@@ -30,13 +50,60 @@ const Index = () => {
   };
 
   const now = new Date();
-  const upcomingEvents = events.filter(e => isAfter(e.start, now)).slice(0, 5);
+  // Coming up: today's meetings; if already end of day (6 PM+), show next day's meetings
+  const endOfDayHour = 18;
+  const targetDay = now.getHours() >= endOfDayHour ? addDays(now, 1) : now;
+  const upcomingEvents = events
+    .filter((e) => isSameDay(new Date(e.start), targetDay))
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
 
   const activeFolderId = searchParams.get("folder");
   const activeFolder = activeFolderId ? folders.find((f) => f.id === activeFolderId) : null;
 
-  // Group notes by date
-  const grouped = notes.reduce<Record<string, typeof notes>>((acc, n) => {
+  useEffect(() => {
+    saveManualActionItems(manualActionItems);
+  }, [manualActionItems]);
+
+  const addManualActionItem = useCallback(() => {
+    setManualActionItems((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), text: "New action item", assignee: "You", done: false },
+    ]);
+  }, []);
+
+  const updateManualActionItem = useCallback((id: string, patch: Partial<ManualActionItem>) => {
+    setManualActionItems((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, ...patch } : m))
+    );
+  }, []);
+
+  const removeManualActionItem = useCallback((id: string) => {
+    setManualActionItems((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  // Focus search when Sidebar "Search" is clicked (navigate with ?focusSearch=1)
+  const focusSearch = searchParams.get("focusSearch") === "1";
+  useEffect(() => {
+    if (focusSearch && searchInputRef.current) {
+      searchInputRef.current.focus();
+      navigate("/", { replace: true });
+    }
+  }, [focusSearch, navigate]);
+
+  // Search filter for home notes list
+  const searchLower = searchQuery.trim().toLowerCase();
+  const notesForList = useMemo(() => {
+    if (!searchLower) return notes;
+    return notes.filter(
+      (n) =>
+        n.title.toLowerCase().includes(searchLower) ||
+        (n.summary?.overview ?? "").toLowerCase().includes(searchLower) ||
+        (n.personalNotes ?? "").toLowerCase().includes(searchLower)
+    );
+  }, [notes, searchLower]);
+
+  // Group notes by date (using filtered list on home)
+  const grouped = notesForList.reduce<Record<string, typeof notesForList>>((acc, n) => {
     (acc[n.date] = acc[n.date] || []).push(n);
     return acc;
   }, {});
@@ -108,7 +175,13 @@ const Index = () => {
             </div>
           </div>
           <div className="absolute bottom-0 left-0 right-0">
-            <AskBar context="home" noteContext={homeNoteContext} />
+            <AskBar
+              context="home"
+              noteContext={homeNoteContext}
+              onNavigateToAskWithExchange={(q, response) =>
+                navigate("/ask", { state: { initialMessages: [{ role: "user", text: q }, { role: "assistant", text: response }] } })
+              }
+            />
           </div>
         </main>
       </div>
@@ -130,25 +203,62 @@ const Index = () => {
         </div>
         <div className="flex-1 overflow-y-auto pb-24">
           <div className="mx-auto max-w-2xl px-6 py-4">
-            {/* Action items (this week) - takes Coming up's place */}
-            <ActionItemsThisWeek notes={notes} updateNote={updateNote} />
+            {/* Search on home */}
+            <div className="mb-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search notes..."
+                  className="w-full rounded-lg border border-border bg-card/50 pl-9 pr-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring/20"
+                  aria-label="Search notes"
+                />
+              </div>
+            </div>
+
+            <ActionItemsThisWeek
+              notes={notes}
+              updateNote={updateNote}
+              manualItems={manualActionItems}
+              onAddManual={addManualActionItem}
+              onUpdateManual={updateManualActionItem}
+              onRemoveManual={removeManualActionItem}
+            />
 
             {/* Notes list */}
-            {notes.length === 0 ? (
+            {notesForList.length === 0 ? (
               <div className="text-center py-12">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent mx-auto mb-4">
-                  <Plus className="h-6 w-6" />
-                </div>
-                <h2 className="font-display text-lg text-foreground mb-2">No notes yet</h2>
-                <p className="text-sm text-muted-foreground max-w-xs mx-auto">
-                  Start a quick recording to capture your first meeting notes.
-                </p>
-                <button
-                  onClick={() => navigate("/new-note?startFresh=1", { state: { startFresh: true } })}
-                  className="mt-5 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
-                >
-                  Quick Note
-                </button>
+                {searchLower ? (
+                  <>
+                    <p className="text-sm text-muted-foreground">No notes match your search.</p>
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      className="mt-3 text-sm text-accent hover:underline"
+                    >
+                      Clear search
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent mx-auto mb-4">
+                      <Plus className="h-6 w-6" />
+                    </div>
+                    <h2 className="font-display text-lg text-foreground mb-2">No notes yet</h2>
+                    <p className="text-sm text-muted-foreground max-w-xs mx-auto">
+                      Start a quick recording to capture your first meeting notes.
+                    </p>
+                    <button
+                      onClick={() => navigate("/new-note?startFresh=1", { state: { startFresh: true } })}
+                      className="mt-5 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
+                    >
+                      Quick Note
+                    </button>
+                  </>
+                )}
               </div>
             ) : (
               <div>
@@ -188,7 +298,13 @@ const Index = () => {
         </div>
 
         <div className="absolute bottom-0 left-0 right-0">
-          <AskBar context="home" noteContext={homeNoteContext} />
+          <AskBar
+              context="home"
+              noteContext={homeNoteContext}
+              onNavigateToAskWithExchange={(q, response) =>
+                navigate("/ask", { state: { initialMessages: [{ role: "user", text: q }, { role: "assistant", text: response }] } })
+              }
+            />
         </div>
       </main>
       {shelfOpen && (

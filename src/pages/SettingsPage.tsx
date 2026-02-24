@@ -425,7 +425,7 @@ export default function SettingsPage() {
       .filter((m) => m.type === "llm" && downloadStates[m.id] === "downloaded")
       .forEach((m) => out.push({ value: `local:${m.id}`, label: `${m.name} (Local)`, group: "Local Models" }));
     if (appleFoundationAvailable) {
-      out.push({ value: "apple:default", label: "Apple Foundation (On-Device)", group: "Apple" });
+      out.push({ value: "apple:default", label: "Apple Intelligence (On-Device)", group: "Apple" });
     }
     Object.entries(connectedProviders)
       .filter(([_, v]) => v.connected)

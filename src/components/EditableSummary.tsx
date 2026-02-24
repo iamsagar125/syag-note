@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   CheckCircle2, Circle, Pencil, AlertCircle, Users
 } from "lucide-react";
@@ -39,7 +39,7 @@ export interface SummaryData {
 }
 
 interface EditableSummaryProps {
-  summary: SummaryData;
+  summary: SummaryData | null;
   onUpdate?: (summary: SummaryData) => void;
 }
 
@@ -50,9 +50,20 @@ function parseBullets(text: string): string[] {
     .filter(Boolean);
 }
 
+const EMPTY_SUMMARY: SummaryData = {
+  overview: "",
+  keyPoints: [],
+  nextSteps: [],
+};
+
 export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
+  const safeSummary = summary ?? EMPTY_SUMMARY;
   const [editingField, setEditingField] = useState<string | null>(null);
-  const [localSummary, setLocalSummary] = useState<SummaryData>(summary);
+  const [localSummary, setLocalSummary] = useState<SummaryData>(safeSummary);
+
+  useEffect(() => {
+    setLocalSummary(summary ?? EMPTY_SUMMARY);
+  }, [summary]);
 
   const commit = (updated: SummaryData) => {
     setLocalSummary(updated);
@@ -65,7 +76,8 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
   };
 
   const handleToggleActionDone = (index: number) => {
-    const items = [...(localSummary.actionItems || localSummary.nextSteps || [])];
+    const items = [...(localSummary.actionItems ?? localSummary.nextSteps ?? [])];
+    if (items[index] == null) return;
     items[index] = { ...items[index], done: !items[index].done };
     const updated = localSummary.actionItems
       ? { ...localSummary, actionItems: items as ActionItem[] }
@@ -74,14 +86,14 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
     onUpdate?.(updated);
   };
 
-  const actions = localSummary.actionItems || localSummary.nextSteps?.map(s => ({
+  const actions = localSummary.actionItems ?? localSummary.nextSteps?.map(s => ({
     ...s, priority: "medium" as const, dueDate: s.dueDate,
-  })) || [];
-  const topics = localSummary.discussionTopics || [];
-  const keyPoints = localSummary.keyPoints || [];
-  const questions = localSummary.questionsAndOpenItems || [];
-  const quotes = localSummary.keyQuotes || [];
-  const attendees = localSummary.attendees || [];
+  })) ?? [];
+  const topics = localSummary.discussionTopics ?? [];
+  const keyPoints = localSummary.keyPoints ?? [];
+  const questions = localSummary.questionsAndOpenItems ?? [];
+  const quotes = localSummary.keyQuotes ?? [];
+  const attendees = localSummary.attendees ?? [];
 
   return (
     <div className="animate-fade-in space-y-4 summary-content font-body" data-summary>

@@ -1,7 +1,8 @@
 /**
- * Generates tray, app (Dock), and in-app icons from SVG assets.
- * - public/app-icon.svg → Dock icon (.icns), in-app logo, favicon
- * - public/tray-icon.svg → menu bar tray (44px, macOS standard like Claude/Cursor)
+ * Generates tray, app (Dock), and in-app icons from assets.
+ * - public/app-icon.png (or .svg) → in-app logo, favicon only (not Dock)
+ * - public/dock-icon.png → Mac app / Dock icon (.icns) only; if missing, app-icon is used for .icns
+ * - public/tray-icon.png (or .svg) → menu bar tray (22px, white for dark menu bar)
  * Run: node scripts/generate-all-icons.js
  * Requires: sharp (devDependency). For .icns: macOS with iconutil.
  */
@@ -12,28 +13,42 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(__dirname, '..')
+const appIconPng = path.join(root, 'public', 'app-icon.png')
 const appIconSvg = path.join(root, 'public', 'app-icon.svg')
+const dockIconPng = path.join(root, 'public', 'dock-icon.png')
+const trayIconPng = path.join(root, 'public', 'tray-icon.png')
 const trayIconSvg = path.join(root, 'public', 'tray-icon.svg')
 
+// macOS menu bar tray standard: 22×22 (1x); ChatGPT, Claude, Cursor use this size
+const TRAY_SIZE = 22
+
 async function main() {
-  if (!fs.existsSync(appIconSvg)) throw new Error('Missing public/app-icon.svg')
-  if (!fs.existsSync(trayIconSvg)) throw new Error('Missing public/tray-icon.svg')
+  const usePngForApp = fs.existsSync(appIconPng)
+  if (!usePngForApp && !fs.existsSync(appIconSvg)) throw new Error('Missing public/app-icon.png or public/app-icon.svg')
+  const usePngForTray = fs.existsSync(trayIconPng)
+  if (!usePngForTray && !fs.existsSync(trayIconSvg)) throw new Error('Missing public/tray-icon.png or public/tray-icon.svg')
 
-  const appSvgBuf = fs.readFileSync(appIconSvg)
-  let traySvg = fs.readFileSync(trayIconSvg).toString('utf8')
-  // Use white strokes for menu bar (macOS standard); replace all dark colors with white
-  const darkColors = [/#111111/gi, /#000000/gi, /#333333/gi, /#222222/gi, /black/gi]
-  for (const re of darkColors) {
-    traySvg = traySvg.replace(re, '#ffffff')
+  const appIconBuf = usePngForApp ? fs.readFileSync(appIconPng) : fs.readFileSync(appIconSvg)
+
+  // ─── 1. Tray icon (22×22; white on transparent for dark menu bar) ───
+  let trayPng
+  if (usePngForTray) {
+    const buf = fs.readFileSync(trayIconPng)
+    trayPng = await sharp(buf)
+      .ensureAlpha()
+      .negate({ alpha: false })  // black → white for menu bar visibility
+      .resize(TRAY_SIZE, TRAY_SIZE)
+      .png({ compressionLevel: 6 })
+      .toBuffer()
+  } else {
+    let traySvg = fs.readFileSync(trayIconSvg).toString('utf8')
+    const darkColors = [/#111111/gi, /#000000/gi, /#333333/gi, /#222222/gi, /black/gi]
+    for (const re of darkColors) traySvg = traySvg.replace(re, '#ffffff')
+    trayPng = await sharp(Buffer.from(traySvg))
+      .resize(TRAY_SIZE, TRAY_SIZE)
+      .png({ compressionLevel: 6 })
+      .toBuffer()
   }
-  const traySvgBuf = Buffer.from(traySvg)
-
-  // ─── 1. Tray icon (22×22 = 1x menu bar size; macOS uses this, scaling up causes big/pixelated look) ───
-  const TRAY_SIZE = 22
-  const trayPng = await sharp(traySvgBuf)
-    .resize(TRAY_SIZE, TRAY_SIZE)
-    .png({ compressionLevel: 6 })
-    .toBuffer()
 
   // Same icon for idle and recording (timer in app is enough; no red dot on tray)
   const trayOutPath = path.join(root, 'electron', 'main', 'tray-icons.generated.ts')
@@ -50,18 +65,19 @@ export const TRAY_ICON_RECORDING_BASE64 = '${trayPng.toString('base64')}'
   fs.writeFileSync(path.join(previewDir, 'preview-tray-22.png'), trayPng)
   console.log('Wrote public/icon-previews/preview-tray-22.png (22×22 tray preview)')
 
-  // ─── 2. In-app icon (app-icon.svg at 96×96); bundle from src/assets in Electron ───
-  const inAppPng = await sharp(appSvgBuf).resize(96, 96).png().toBuffer()
+  // ─── 2. In-app icon (96×96); bundle from src/assets in Electron ───
+  const inAppPng = await sharp(appIconBuf).resize(96, 96).png().toBuffer()
   fs.writeFileSync(path.join(root, 'public', 'syag-logo-inapp.png'), inAppPng)
   fs.writeFileSync(path.join(root, 'src', 'assets', 'syag-logo-inapp.png'), inAppPng)
   console.log('Wrote public/syag-logo-inapp.png and src/assets/syag-logo-inapp.png')
 
-  const favicon = await sharp(appSvgBuf).resize(32, 32).png().toBuffer()
+  const favicon = await sharp(appIconBuf).resize(32, 32).png().toBuffer()
   fs.writeFileSync(path.join(root, 'public', 'favicon.png'), favicon)
   console.log('Wrote public/favicon.png')
 
-  // ─── 3. Mac app icon / Dock (app-icon.svg → .icns) ───────────────────────────
-  const app1024 = await sharp(appSvgBuf).resize(1024, 1024).png().toBuffer()
+  // ─── 3. Mac app icon / Dock (.icns) ─── uses dock-icon.png if present, else app icon
+  const dockIconBuf = fs.existsSync(dockIconPng) ? fs.readFileSync(dockIconPng) : appIconBuf
+  const app1024 = await sharp(dockIconBuf).resize(1024, 1024).png().toBuffer()
 
   const resourcesDir = path.join(root, 'electron', 'resources')
   const iconsetDir = path.join(resourcesDir, 'icon.iconset')

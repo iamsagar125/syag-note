@@ -17,9 +17,11 @@ interface AskBarProps {
   transcriptVisible?: boolean;
   recordingState?: "recording" | "paused" | "stopped";
   elapsed?: string;
+  /** When set and context is "home", on response navigate to Ask Syag with question + response instead of showing popup */
+  onNavigateToAskWithExchange?: (question: string, response: string) => void;
 }
 
-export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, onResumeRecording, onPauseRecording, onToggleTranscript, transcriptVisible, recordingState, elapsed }: AskBarProps) {
+export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, onResumeRecording, onPauseRecording, onToggleTranscript, transcriptVisible, recordingState, elapsed, onNavigateToAskWithExchange }: AskBarProps) {
   const { getActiveAIModelLabel, selectedAIModel } = useModelSettings();
   const api = getElectronAPI();
 
@@ -63,15 +65,19 @@ export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, 
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  const redirectToAsk = context === "home" && onNavigateToAskWithExchange;
+
   const handleSend = useCallback(async (override?: string) => {
     const q = (override ?? input).trim();
     if (!q) return;
     setInput("");
-    setShowChat(true);
+    if (!redirectToAsk) setShowChat(true);
 
     const userMsg = { role: "user" as const, text: q };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
+
+    let responseText: string;
 
     if (api && selectedAIModel) {
       try {
@@ -90,28 +96,33 @@ export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, 
           model: selectedAIModel,
         });
 
-        if (response) {
-          setMessages((prev) => [
-            ...prev,
-            { role: "assistant", text: normalizeChatResponse(response) },
-          ]);
+        responseText = response ? normalizeChatResponse(response) : "";
+        if (!redirectToAsk) {
+          if (responseText) {
+            setMessages((prev) => [...prev, { role: "assistant", text: responseText }]);
+          }
         }
       } catch (err: any) {
-        setMessages((prev) => [
-          ...prev,
-          { role: "assistant", text: `Error: ${err.message || 'Failed to get response. Check your AI model in Settings.'}` },
-        ]);
+        responseText = `Error: ${err.message || 'Failed to get response. Check your AI model in Settings.'}`;
+        if (!redirectToAsk) {
+          setMessages((prev) => [...prev, { role: "assistant", text: responseText }]);
+        }
       }
     } else {
       const modelLabel = getActiveAIModelLabel();
       await new Promise(r => setTimeout(r, 500));
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", text: `[${modelLabel || 'No model'}] Connect an AI model in Settings to ask questions about your notes.` },
-      ]);
+      responseText = `[${modelLabel || 'No model'}] Connect an AI model in Settings to ask questions about your notes.`;
+      if (!redirectToAsk) {
+        setMessages((prev) => [...prev, { role: "assistant", text: responseText }]);
+      }
     }
+
     setIsLoading(false);
-  }, [input, messages, api, selectedAIModel, noteContext, getActiveAIModelLabel]);
+
+    if (redirectToAsk && responseText !== undefined) {
+      onNavigateToAskWithExchange(q, responseText);
+    }
+  }, [input, messages, api, selectedAIModel, noteContext, getActiveAIModelLabel, redirectToAsk, onNavigateToAskWithExchange]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

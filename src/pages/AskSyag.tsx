@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowUp, ChevronDown, ChevronRight, FileText, Square } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
@@ -22,6 +23,8 @@ const recipes = [
 ];
 
 export default function AskSyag() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { getActiveAIModelLabel, selectedAIModel } = useModelSettings();
   const { notes } = useNotes();
   const api = getElectronAPI();
@@ -34,6 +37,18 @@ export default function AskSyag() {
   const [streamingText, setStreamingText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const addedFromStreamRef = useRef(false);
+
+  // Apply initial messages when navigated from home Ask bar
+  useEffect(() => {
+    const initial = location.state?.initialMessages as { role: string; text: string }[] | undefined;
+    if (Array.isArray(initial) && initial.length > 0) {
+      setMessages(
+        initial.map((m) => ({ role: m.role as "user" | "assistant", text: m.text ?? "" }))
+      );
+      navigate("/ask", { replace: true, state: {} });
+    }
+  }, [location.state, navigate]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -47,6 +62,7 @@ export default function AskSyag() {
       if (chunk.done) {
         setStreamingText((current) => {
           if (current) {
+            addedFromStreamRef.current = true;
             setMessages((prev) => [...prev, { role: "assistant", text: normalizeChatResponse(current) }]);
           }
           return "";
@@ -101,6 +117,7 @@ export default function AskSyag() {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
     setStreamingText("");
+    addedFromStreamRef.current = false;
 
     if (api && selectedAIModel) {
       try {
@@ -116,11 +133,11 @@ export default function AskSyag() {
           model: selectedAIModel,
         });
 
-        // If we got a direct response (non-streaming), add it
-        if (response && !streamingText) {
+        // Only add from response if we didn't already add from stream (avoids duplicate)
+        if (response && !addedFromStreamRef.current) {
           setMessages((prev) => [
             ...prev,
-            { role: "assistant", text: response },
+            { role: "assistant", text: typeof response === "string" ? response : "" },
           ]);
           setIsLoading(false);
         }
@@ -144,7 +161,7 @@ export default function AskSyag() {
         setIsLoading(false);
       }, 800);
     }
-  }, [input, messages, getActiveAIModelLabel, useTranscripts, api, selectedAIModel, buildNotesContext, streamingText]);
+  }, [input, messages, getActiveAIModelLabel, useTranscripts, api, selectedAIModel, buildNotesContext]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
