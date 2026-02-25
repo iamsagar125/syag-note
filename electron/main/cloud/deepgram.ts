@@ -9,10 +9,16 @@ const MODEL_MAP: Record<string, string> = {
 export async function sttDeepgram(
   wavBuffer: Buffer,
   modelName: string,
-  apiKey: string
+  apiKey: string,
+  vocabulary?: string[]
 ): Promise<string> {
   const model = MODEL_MAP[modelName] || 'nova-2'
-  const url = `https://api.deepgram.com/v1/listen?model=${model}&language=en&smart_format=true`
+  const params = new URLSearchParams({ model, language: 'en', smart_format: 'true' })
+  if (vocabulary?.length) {
+    const keywords = vocabulary.slice(0, 100).map(t => `${encodeURIComponent(t)}:2`).join(',')
+    params.set('keywords', keywords)
+  }
+  const url = `https://api.deepgram.com/v1/listen?${params.toString()}`
 
   try {
     const { statusCode, data } = await netFetch(url, {

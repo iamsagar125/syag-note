@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { AskBar } from "@/components/AskBar";
@@ -6,15 +6,29 @@ import { EditableSummary } from "@/components/EditableSummary";
 import { NotesViewToggle } from "@/components/NotesViewToggle";
 import { useNotes } from "@/contexts/NotesContext";
 import { useRecording } from "@/contexts/RecordingContext";
-import { PanelLeftClose, PanelLeft, Share2, MoreHorizontal, FileText, Hash, Calendar, Clock, EyeOff, Eye, Search, X } from "lucide-react";
+import { useModelSettings } from "@/contexts/ModelSettingsContext";
+import { PanelLeftClose, PanelLeft, Share2, MoreHorizontal, FileText, Hash, Calendar, Clock, EyeOff, Eye, Search, X, Check, ChevronDown, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { isElectron } from "@/lib/electron-api";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
+import { toast } from "sonner";
+
+const BUILTIN_TEMPLATES = [
+  { id: "general", name: "General", icon: "📋" },
+  { id: "standup", name: "Standup", icon: "🏃" },
+  { id: "one-on-one", name: "1:1", icon: "🤝" },
+  { id: "brainstorm", name: "Brainstorm", icon: "💡" },
+  { id: "customer-call", name: "Customer Call", icon: "📞" },
+  { id: "interview", name: "Interview", icon: "🎯" },
+  { id: "retrospective", name: "Retro", icon: "🔄" },
+];
 
 export default function NoteDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { notes, updateNote } = useNotes();
   const { activeSession, startSession, updateSession, clearSession } = useRecording();
+  const { selectedAIModel } = useModelSettings();
+  const api = getElectronAPI();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"my-notes" | "ai-notes">("ai-notes");
   const [transcriptVisible, setTranscriptVisible] = useState(false);
@@ -22,8 +36,12 @@ export default function NoteDetailPage() {
   const [recordingState, setRecordingState] = useState<"recording" | "paused" | "stopped">("stopped");
   const [elapsed, setElapsed] = useState(0);
   const [newLines, setNewLines] = useState<{ speaker: string; time: string; text: string }[]>([]);
+  const [meetingTemplate, setMeetingTemplate] = useState("general");
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lineTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const templateMenuRef = useRef<HTMLDivElement>(null);
 
   // Timer logic
   useEffect(() => {
@@ -102,6 +120,47 @@ export default function NoteDetailPage() {
 
   const note = notes.find((n) => n.id === id);
 
+  const handleRegenerate = useCallback(async () => {
+    if (!id || !note || !api || !selectedAIModel) {
+      toast.error("Select an AI model in Settings to regenerate the summary.");
+      return;
+    }
+    const transcript = note.transcript || [];
+    if (transcript.length === 0 && !(note.personalNotes || "").trim()) {
+      toast.error("No transcript or notes to summarize.");
+      return;
+    }
+    setIsSummarizing(true);
+    try {
+      const customPrompt = BUILTIN_TEMPLATES.some(t => t.id === meetingTemplate)
+        ? undefined
+        : (await api.db.settings.get(`template-prompt-${meetingTemplate}`).catch(() => null)) || undefined;
+      const summary = await api.llm.summarize({
+        transcript,
+        personalNotes: note.personalNotes || "",
+        model: selectedAIModel,
+        meetingTemplateId: meetingTemplate,
+        customPrompt,
+      });
+      updateNote(id, { summary });
+      toast.success("Summary regenerated.");
+    } catch (err: any) {
+      console.error("Regenerate summary failed:", err);
+      toast.error("Summary failed. Try again.");
+    } finally {
+      setIsSummarizing(false);
+    }
+  }, [id, note, api, selectedAIModel, meetingTemplate, updateNote]);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (templateMenuRef.current && !templateMenuRef.current.contains(target)) setShowTemplateMenu(false);
+    };
+    if (showTemplateMenu) document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showTemplateMenu]);
+
   if (!note) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
@@ -144,7 +203,6 @@ export default function NoteDetailPage() {
             </button>
           </div>
           <div className="flex items-center gap-1.5">
-            <NotesViewToggle viewMode={viewMode} onViewModeChange={setViewMode} />
             <button className="rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
               <Share2 className="h-3.5 w-3.5" />
             </button>
@@ -162,7 +220,7 @@ export default function NoteDetailPage() {
                 {/* Title */}
                 <h1 className="mb-3 font-display text-2xl text-foreground leading-tight">{note.title}</h1>
 
-                {/* Meta chips */}
+                {/* Meta chips — date, time, then My note / AI + template */}
                 <div className="flex items-center gap-2 mb-6 flex-wrap">
                   <span className="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs text-foreground">
                     <Calendar className="h-3 w-3" />
@@ -172,6 +230,47 @@ export default function NoteDetailPage() {
                     <Clock className="h-3 w-3" />
                     {note.timeRange ?? note.duration}
                   </span>
+                  <NotesViewToggle viewMode={viewMode} onViewModeChange={setViewMode} />
+                  <div ref={templateMenuRef} className="relative flex items-center gap-0.5">
+                    <button
+                      onClick={() => setShowTemplateMenu(!showTemplateMenu)}
+                      className="flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 text-[12px] text-foreground hover:bg-secondary transition-colors"
+                      title="Switch template"
+                    >
+                      <span>{BUILTIN_TEMPLATES.find((t) => t.id === meetingTemplate)?.icon ?? "📋"}</span>
+                      <span className="max-w-[80px] truncate">{BUILTIN_TEMPLATES.find((t) => t.id === meetingTemplate)?.name ?? "General"}</span>
+                      <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", showTemplateMenu && "rotate-180")} />
+                    </button>
+                    {showTemplateMenu && (
+                      <div className="absolute left-0 top-full mt-1 w-52 rounded-lg border border-border bg-popover shadow-lg z-50 overflow-hidden py-1">
+                        {BUILTIN_TEMPLATES.map((t) => (
+                          <button
+                            key={t.id}
+                            onClick={() => {
+                              setMeetingTemplate(t.id);
+                              setShowTemplateMenu(false);
+                            }}
+                            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] text-foreground hover:bg-secondary transition-colors"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span>{t.icon}</span>
+                              <span>{t.name}</span>
+                            </span>
+                            {meetingTemplate === t.id && <Check className="h-3.5 w-3.5 text-accent flex-shrink-0" />}
+                          </button>
+                        ))}
+                        <p className="px-3 py-1.5 text-[10px] text-muted-foreground border-t border-border mt-1">Select a template, then click refresh to regenerate.</p>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => { setShowTemplateMenu(false); handleRegenerate(); }}
+                      disabled={isSummarizing}
+                      className="rounded-full border border-border bg-card p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                      title="Regenerate summary with selected template"
+                    >
+                      <RefreshCw className={cn("h-3.5 w-3.5", isSummarizing && "animate-spin")} />
+                    </button>
+                  </div>
                 </div>
 
                 {viewMode === "ai-notes" ? (

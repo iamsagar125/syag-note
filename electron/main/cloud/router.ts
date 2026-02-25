@@ -66,8 +66,9 @@ export async function routeLLM(
 /**
  * Route an STT request to the appropriate cloud provider.
  * model format: "providerId:modelName" (e.g., "deepgram:Nova-2")
+ * vocabulary: optional domain terms to improve recognition (Deepgram keywords)
  */
-export async function routeSTT(wavBuffer: Buffer, model: string): Promise<string> {
+export async function routeSTT(wavBuffer: Buffer, model: string, vocabulary?: string[]): Promise<string> {
   if (!model?.trim()) {
     throw new Error('No STT model selected. Choose one in Settings > AI Models.')
   }
@@ -83,7 +84,7 @@ export async function routeSTT(wavBuffer: Buffer, model: string): Promise<string
     case 'openai':
       return sttOpenAI(wavBuffer, apiKey)
     case 'deepgram':
-      return sttDeepgram(wavBuffer, modelName, apiKey)
+      return sttDeepgram(wavBuffer, modelName, apiKey, vocabulary)
     case 'assemblyai':
       return sttAssemblyAI(wavBuffer, apiKey)
     case 'groq':

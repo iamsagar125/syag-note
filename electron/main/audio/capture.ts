@@ -26,7 +26,7 @@ let consecutiveSilentChunks = 0
 const CHUNK_INTERVAL_ACTIVE_MS = 4000
 const CHUNK_INTERVAL_IDLE_MS = 15000
 const SAMPLE_RATE = 16000
-const AUTO_PAUSE_SILENCE_MS = 3000 // 3s silence → auto-pause and run summary
+// Auto-pause on silence disabled — user manually pauses and uses "Generate summary" button
 const MIN_SAMPLES_PER_CHANNEL = 16000 * 2 // 2s minimum for STT (near real-time, APIs support short audio)
 // Diarization is channel-based: channel 0 = mic (You), channel 1 = system audio (Others).
 // When you're muted, mic may still send silence/comfort noise; we use stricter gates for "You" to avoid false labels.
@@ -52,8 +52,10 @@ function restartChunkTimer(): void {
   }, currentChunkIntervalMs)
 }
 
+let meetingContextVocabulary: string[] = []
+
 export async function startRecording(
-  options: { sttModel: string; deviceId?: string },
+  options: { sttModel: string; deviceId?: string; meetingTitle?: string; vocabulary?: string[] },
   onTranscript: TranscriptCallback,
   onStatus?: StatusCallback
 ): Promise<boolean> {
@@ -72,10 +74,24 @@ export async function startRecording(
   currentSTTModel = options.sttModel
   resetContext()
 
+  // Merge vocabulary: settings + meeting title tokens + explicit vocabulary
+  const titleTerms = options.meetingTitle
+    ? options.meetingTitle.split(/\s+/).filter(w => w.length > 2)
+    : []
+  meetingContextVocabulary = [
+    ...(options.vocabulary || []),
+    ...titleTerms,
+  ]
+
   try {
-    customVocabulary = getSetting('custom-vocabulary') || ''
+    const fromSettings = getSetting('custom-vocabulary') || ''
+    const terms = [
+      ...(typeof fromSettings === 'string' ? fromSettings.split(/[,\n]+/).map(t => t.trim()).filter(Boolean) : []),
+      ...meetingContextVocabulary,
+    ].filter((v, i, a) => a.indexOf(v) === i).slice(0, 100)
+    customVocabulary = terms.join(', ')
   } catch {
-    customVocabulary = ''
+    customVocabulary = meetingContextVocabulary.join(', ')
   }
 
   if (currentSTTModel) {
@@ -90,16 +106,7 @@ export async function startRecording(
     if (hasData) processBufferedAudio()
   }, currentChunkIntervalMs)
 
-  // Silence monitor: auto-pause when no speech detected for 3s
-  silenceTimer = setInterval(() => {
-    if (!isRecording || isPaused || autoPaused) return
-    const silenceDuration = Date.now() - lastSpeechTime
-    if (silenceDuration >= AUTO_PAUSE_SILENCE_MS) {
-      autoPaused = true
-      isPaused = true
-      statusCallback?.({ state: 'auto-paused' })
-    }
-  }, 5000)
+  // Silence-based auto-pause disabled — user triggers pause manually and uses "Generate summary" button
 
   return true
 }
@@ -120,6 +127,7 @@ export function stopRecording(): any {
     clearInterval(silenceTimer)
     silenceTimer = null
   }
+  // silenceTimer no longer used (auto-pause disabled)
 
   const hasData = (audioBuffers[0].length > 0 || audioBuffers[1].length > 0)
   if (hasData && !isProcessing) {
@@ -264,16 +272,18 @@ async function processBufferedAudio(): Promise<void> {
         const text = await sttSystemDarwin(wavBuffer)
         sttResult = { text, words: [] }
       } else {
-        const text = await routeSTT(wavBuffer, currentSTTModel)
+        const vocab = customVocabulary ? customVocabulary.split(/[,\n]+/).map(t => t.trim()).filter(Boolean).slice(0, 100) : undefined
+        const text = await routeSTT(wavBuffer, currentSTTModel, vocab)
         sttResult = { text, words: [] }
       }
 
-      if (sttResult.text.trim()) {
+      const filtered = filterHallucinatedTranscript(sttResult.text)
+      if (filtered) {
         lastSpeechTime = Date.now()
         transcriptCallback({
           speaker,
           time: formatTimestamp(chunkStartSec),
-          text: sttResult.text.trim(),
+          text: filtered,
         })
       }
     } catch (err: any) {
@@ -337,6 +347,42 @@ function formatTimestamp(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+/** Filter known Whisper/STT hallucinations before emitting transcript. */
+function filterHallucinatedTranscript(text: string): string | null {
+  const t = text.trim()
+  if (!t) return null
+
+  const lower = t.toLowerCase()
+
+  // Known video/streaming hallucination phrases
+  const hallucinationPatterns = [
+    /thank\s+you\s+for\s+watching/i,
+    /subscribe\s*(to\s+our\s+channel)?/i,
+    /like\s+and\s+subscribe/i,
+    /see\s+you\s+next\s+time/i,
+    /don't\s+forget\s+to\s+subscribe/i,
+    /hit\s+the\s+(bell|subscribe)\s+button/i,
+  ]
+  for (const pat of hallucinationPatterns) {
+    if (pat.test(lower)) return null
+  }
+
+  // Repeated short phrase (same 2–4 words 3+ times in a row)
+  const words = t.split(/\s+/)
+  if (words.length >= 6) {
+    for (let len = 2; len <= 4; len++) {
+      for (let i = 0; i <= words.length - len * 3; i++) {
+        const chunk = words.slice(i, i + len).join(' ').toLowerCase()
+        const next1 = words.slice(i + len, i + len * 2).join(' ').toLowerCase()
+        const next2 = words.slice(i + len * 2, i + len * 3).join(' ').toLowerCase()
+        if (chunk === next1 && chunk === next2) return null
+      }
+    }
+  }
+
+  return t
 }
 
 function pcmToWav(pcm: Float32Array, sampleRate: number): Buffer {

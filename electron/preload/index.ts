@@ -57,7 +57,7 @@ const electronAPI = {
   },
 
   recording: {
-    start: (options: { sttModel: string; deviceId?: string }) =>
+    start: (options: { sttModel: string; deviceId?: string; meetingTitle?: string; vocabulary?: string[] }) =>
       ipcRenderer.invoke('recording:start', options),
     stop: () => ipcRenderer.invoke('recording:stop'),
     pause: () => ipcRenderer.invoke('recording:pause'),

@@ -8,7 +8,7 @@ import {
   Mic, MicOff, Pause, Play, Eye, EyeOff, Square, Search,
   PanelLeftClose, PanelLeft, Share2, MoreHorizontal,
   Calendar, Clock, Plus, FolderOpen, Check, X, Hash,
-  CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, RefreshCw
+  CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, RefreshCw, FileText
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFolders } from "@/contexts/FolderContext";
@@ -158,6 +158,8 @@ export default function NewNotePage() {
   const [showRealTimeTranscript, setShowRealTimeTranscript] = useState(true);
   const [autoGenerateNotes, setAutoGenerateNotes] = useState(true);
   const [noteId, setNoteId] = useState(() => isReturning ? existingSessionId! : crypto.randomUUID());
+  /** Granola-style: only start mic when user explicitly clicks Start. Prevents mic use when app opens or meeting detected. */
+  const [userHasStartedCapture, setUserHasStartedCapture] = useState(false);
   useEffect(() => {
     if (existingSessionId && noteId !== existingSessionId) setNoteId(existingSessionId);
   }, [existingSessionId]);
@@ -326,10 +328,12 @@ export default function NewNotePage() {
           setPersonalNotes("");
           setRecordingState("recording");
           setViewMode("ai-notes");
+          setUserHasStartedCapture(true); // User clicked Quick Note — explicit start
           startSession(newId);
           navigate(`/new-note?session=${newId}`, { replace: true });
           if (usingRealAudio) {
-            startAudioCapture(selectedSTTModel || "").catch((err) => {
+            const meetingTitle = eventState?.eventTitle ?? title || undefined;
+            startAudioCapture(selectedSTTModel || "", { meetingTitle }).catch((err) => {
               console.error("Audio capture failed:", err);
               toast.error("Recording couldn't start. Check microphone and STT settings.");
             });
@@ -362,14 +366,20 @@ export default function NewNotePage() {
           stopAudioCapture().catch(console.error);
         }
         startSession(noteId);
-        if (usingRealAudio) {
-          startAudioCapture(selectedSTTModel || "").catch((err) => {
+        // Granola-style: only start capture when user explicitly clicked "Quick Note". Calendar/meeting landing = show "Start recording" button.
+        if (usingRealAudio && startFresh) {
+          setUserHasStartedCapture(true);
+          const meetingTitle = eventState?.eventTitle ?? title || undefined;
+          startAudioCapture(selectedSTTModel || "", { meetingTitle }).catch((err) => {
             console.error("Audio capture failed:", err);
             toast.error("Recording couldn't start. Check microphone and STT settings.");
           });
+        } else {
+          setUserHasStartedCapture(false); // Require explicit "Start recording" click
         }
       } else if (activeSession) {
         setTitle(activeSession.title === "New note" ? "" : activeSession.title);
+        setUserHasStartedCapture(true); // Returning to existing session — was already capturing
         if (activeSession.isRecording) {
           setRecordingState("recording");
         }
@@ -386,20 +396,12 @@ export default function NewNotePage() {
     updateSession({ isRecording: true, title: title || "New note" });
   }, [recordingState, title, updateSession]);
 
-  // Sync recording state with auto-pause/resume from main process
-  // Auto-pause from silence detection auto-generates notes. Do not overwrite user-initiated pause when main state is delayed.
+  // Sync recording state with main process (auto-pause disabled — manual pause only)
   useEffect(() => {
     if (recordingState === "stopped") return;
     if (activeSession && !activeSession.isRecording && recordingState === "recording") {
       userPausedRef.current = false;
       setRecordingState("paused");
-      // Auto-paused by main process (silence detection) -- auto-generate notes if enabled
-      if (autoGenerateNotes && !isSummarizing && (transcriptRef.current.length > 0 || (typeof personalNotes === 'string' && personalNotes.trim().length > 0))) {
-        generateNotes().catch((err) => {
-          console.error("Auto-pause summary failed:", err);
-          toast.error("Summary failed. Try again.");
-        });
-      }
     } else if (activeSession && activeSession.isRecording && recordingState === "paused" && !userPausedRef.current) {
       setRecordingState("recording");
     }
@@ -462,8 +464,10 @@ export default function NewNotePage() {
       // Restore session without clearing transcript, then restart capture so new chunks append
       resumeSession(noteId, title || "New note", elapsedSeconds);
       setSummary(null);
+      setUserHasStartedCapture(true);
       if (usingRealAudio) {
-        startAudioCapture(selectedSTTModel || '').catch(console.error);
+        const meetingTitle = title || "New note" || undefined;
+        startAudioCapture(selectedSTTModel || '', { meetingTitle }).catch(console.error);
       }
     } else {
       setSummary(null);
@@ -554,7 +558,7 @@ export default function NewNotePage() {
       : elapsed;
   const isStopped = recordingState === "stopped";
   const showSummaryPanel = (recordingState === "paused" || recordingState === "stopped") && (summary || isSummarizing);
-  const showTemplateSelector = currentTranscript.length > 0 || showSummaryPanel;
+  const showTemplateSelector = recordingState !== "recording" && (currentTranscript.length > 0 || showSummaryPanel);
 
   const folderChip = (
     <>
@@ -871,7 +875,54 @@ export default function NewNotePage() {
               </div>
             </div>
 
-            <div className="relative">
+            <div className="relative space-y-2">
+              {/* Granola-style: require explicit "Start recording" when landing from calendar/meeting */}
+              {usingRealAudio && !userHasStartedCapture && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserHasStartedCapture(true);
+                    const meetingTitle = eventState?.eventTitle ?? title || undefined;
+                    startAudioCapture(selectedSTTModel || "", { meetingTitle }).catch((err) => {
+                      console.error("Audio capture failed:", err);
+                      toast.error("Recording couldn't start. Check microphone and STT settings.");
+                    });
+                  }}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-accent px-4 py-4 text-sm font-semibold text-accent-foreground hover:opacity-90 transition-opacity"
+                >
+                  <Mic className="h-5 w-5" />
+                  Start recording
+                </button>
+              )}
+              {recordingState === "paused" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (transcriptRef.current.length > 0 || personalNotes.trim().length > 0) {
+                      generateNotes().catch((err) => {
+                        console.error("Summary failed:", err);
+                        toast.error("Summary failed. Try again.");
+                      });
+                    } else {
+                      toast.error("Add notes or transcript first.");
+                    }
+                  }}
+                  disabled={isSummarizing}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSummarizing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-4 w-4" />
+                      Generate summary
+                    </>
+                  )}
+                </button>
+              )}
               <AskBar
                 context="meeting"
                 meetingTitle={title || "New note"}
@@ -883,12 +934,6 @@ export default function NewNotePage() {
                   setRecordingState("paused");
                   if (usingRealAudio) {
                     pauseAudioCapture().catch(console.error);
-                  }
-                  if (transcriptRef.current.length > 0 || personalNotes.trim().length > 0) {
-                    generateNotes().catch((err) => {
-                      console.error("Summary failed:", err);
-                      toast.error("Summary failed. Try again.");
-                    });
                   }
                 }}
                 onToggleTranscript={() => setTranscriptVisible(!transcriptVisible)}

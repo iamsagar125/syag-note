@@ -31,7 +31,7 @@ interface RecordingContextType {
   /** Set when capture failed (e.g. no mic, worklet load failed). Clear on retry or when user dismisses. */
   captureError: string | null;
   clearCaptureError: () => void;
-  startAudioCapture: (sttModel: string) => Promise<void>;
+  startAudioCapture: (sttModel: string, options?: { meetingTitle?: string; vocabulary?: string[] }) => Promise<void>;
   stopAudioCapture: () => Promise<void>;
   pauseAudioCapture: () => Promise<void>;
   resumeAudioCapture: (sttModel?: string) => Promise<void>;
@@ -212,7 +212,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const clearCaptureError = useCallback(() => setCaptureError(null), []);
 
-  const startAudioCapture = useCallback(async (sttModel: string) => {
+  const startAudioCapture = useCallback(async (sttModel: string, options?: { meetingTitle?: string; vocabulary?: string[] }) => {
     if (!api) return;
     setCaptureError(null);
 
@@ -224,7 +224,11 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     } catch {}
 
     try {
-      await api.recording.start({ sttModel: sttModel || '' });
+      await api.recording.start({
+        sttModel: sttModel || '',
+        meetingTitle: options?.meetingTitle,
+        vocabulary: options?.vocabulary,
+      });
 
       const audioCtx = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = audioCtx;
