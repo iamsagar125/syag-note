@@ -332,7 +332,7 @@ export default function NewNotePage() {
           startSession(newId);
           navigate(`/new-note?session=${newId}`, { replace: true });
           if (usingRealAudio) {
-            const meetingTitle = eventState?.eventTitle ?? title || undefined;
+            const meetingTitle = (eventState?.eventTitle ?? title) || undefined;
             startAudioCapture(selectedSTTModel || "", { meetingTitle }).catch((err) => {
               console.error("Audio capture failed:", err);
               toast.error("Recording couldn't start. Check microphone and STT settings.");
@@ -369,7 +369,7 @@ export default function NewNotePage() {
         // Granola-style: only start capture when user explicitly clicked "Quick Note". Calendar/meeting landing = show "Start recording" button.
         if (usingRealAudio && startFresh) {
           setUserHasStartedCapture(true);
-          const meetingTitle = eventState?.eventTitle ?? title || undefined;
+          const meetingTitle = (eventState?.eventTitle ?? title) || undefined;
           startAudioCapture(selectedSTTModel || "", { meetingTitle }).catch((err) => {
             console.error("Audio capture failed:", err);
             toast.error("Recording couldn't start. Check microphone and STT settings.");
@@ -882,7 +882,7 @@ export default function NewNotePage() {
                   type="button"
                   onClick={() => {
                     setUserHasStartedCapture(true);
-                    const meetingTitle = eventState?.eventTitle ?? title || undefined;
+                    const meetingTitle = (eventState?.eventTitle ?? title) || undefined;
                     startAudioCapture(selectedSTTModel || "", { meetingTitle }).catch((err) => {
                       console.error("Audio capture failed:", err);
                       toast.error("Recording couldn't start. Check microphone and STT settings.");
