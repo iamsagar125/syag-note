@@ -10,9 +10,10 @@ export interface VADSegment {
   end: number
 }
 
-const VAD_THRESHOLD = 0.5
+// Tuned for meetings: lower threshold catches quieter speakers, longer silence avoids splitting mid-thought
+const VAD_THRESHOLD = 0.45
 const MIN_SPEECH_DURATION = 0.25
-const MIN_SILENCE_DURATION = 0.3
+const MIN_SILENCE_DURATION = 0.5
 const WINDOW_SIZE_SAMPLES = 512
 
 function getVADModelPath(): string {

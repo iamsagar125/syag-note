@@ -10,15 +10,19 @@ interface AskBarProps {
   meetingTitle?: string;
   noteContext?: string;
   leftSlot?: React.ReactNode;
+  /** Slot for Generate summary button, shown beside pause when paused */
+  generateSummarySlot?: React.ReactNode;
   onResumeRecording?: () => void;
   onPauseRecording?: () => void;
   onToggleTranscript?: () => void;
   transcriptVisible?: boolean;
+  /** When true, transcript toggle is shown elsewhere (e.g. beside NotesViewToggle) */
+  hideTranscriptToggle?: boolean;
   recordingState?: "recording" | "paused" | "stopped";
   elapsed?: string;
 }
 
-export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, onResumeRecording, onPauseRecording, onToggleTranscript, transcriptVisible, recordingState, elapsed }: AskBarProps) {
+export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, generateSummarySlot, onResumeRecording, onPauseRecording, onToggleTranscript, transcriptVisible, hideTranscriptToggle, recordingState, elapsed }: AskBarProps) {
   const { getActiveAIModelLabel, selectedAIModel } = useModelSettings();
   const api = getElectronAPI();
 
@@ -195,13 +199,15 @@ export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, 
 
           {context === "meeting" && recordingState && (
             <div className="flex items-center gap-1.5 flex-shrink-0">
-              <button
-                onClick={onToggleTranscript}
-                className="flex items-center justify-center rounded-full border border-border bg-card shadow-lg w-10 h-10 text-muted-foreground hover:text-foreground transition-colors"
-                title={transcriptVisible ? "Hide transcript" : "Show transcript"}
-              >
-                {transcriptVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-              </button>
+              {!hideTranscriptToggle && (
+                <button
+                  onClick={onToggleTranscript}
+                  className="flex items-center justify-center rounded-full border border-border bg-card shadow-lg w-10 h-10 text-muted-foreground hover:text-foreground transition-colors"
+                  title={transcriptVisible ? "Hide transcript" : "Show transcript"}
+                >
+                  {transcriptVisible ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              )}
 
               <button
                 onClick={recordingState === "recording" ? onPauseRecording : onResumeRecording}
@@ -237,6 +243,7 @@ export function AskBar({ context = "home", meetingTitle, noteContext, leftSlot, 
                   <Play className="h-3.5 w-3.5" />
                 )}
               </button>
+              {generateSummarySlot}
             </div>
           )}
 

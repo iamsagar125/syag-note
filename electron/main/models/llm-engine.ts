@@ -23,6 +23,25 @@ Response format (standard AI assistant style, like ChatGPT, Claude, Granola):
 
 // ─── Summarize ──────────────────────────────────────────────────────────────
 
+/** Granola-style: extract meeting title from LLM response. Template format: **Title** — Date */
+function extractTitleFromResponse(response: string): string {
+  const trimmed = response.trim()
+  if (!trimmed) return 'Meeting Notes'
+
+  // Primary: **Title** — Date or **Title** - Date
+  const primary = trimmed.match(/^\*\*(.+?)\*\*\s*[—\-]/m)
+  if (primary?.[1]) return primary[1].trim()
+
+  // Fallback: first **bold** on first non-empty line (skip TL;DR)
+  const firstLine = trimmed.split('\n').find((l) => l.trim().length > 0) || ''
+  if (!/^TL;DR/i.test(firstLine.trim())) {
+    const bold = firstLine.match(/\*\*([^*]+)\*\*/)
+    if (bold?.[1] && bold[1].trim().length > 2) return bold[1].trim()
+  }
+
+  return 'Meeting Notes'
+}
+
 function buildMeetingContext(overrides?: Partial<MeetingContext>): MeetingContext {
   const dateStr = new Date().toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })
   return {
@@ -64,7 +83,7 @@ export async function summarize(
   )
 
   const parsed = parseEnhancedNotes(response)
-  const title = (response.match(/^\*\*(.+?)\*\*\s*[—\-]/m) || [])[1]?.trim() || 'Meeting Notes'
+  const title = extractTitleFromResponse(response)
   return parsedToMeetingSummary(parsed, title, template.id)
 }
 
@@ -120,7 +139,7 @@ async function summarizeWithLocal(
     await model.dispose()
 
     const parsed = parseEnhancedNotes(response)
-    const title = (response.match(/^\*\*(.+?)\*\*\s*[—\-]/m) || [])[1]?.trim() || 'Meeting Notes'
+    const title = extractTitleFromResponse(response)
     return parsedToMeetingSummary(parsed, title, template.id)
   } catch (err: any) {
     if (err.code === 'MODULE_NOT_FOUND' || err.message?.includes('Cannot find module')) {

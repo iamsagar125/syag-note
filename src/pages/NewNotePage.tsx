@@ -8,7 +8,7 @@ import {
   Mic, MicOff, Pause, Play, Eye, EyeOff, Square, Search,
   PanelLeftClose, PanelLeft, Share2, MoreHorizontal,
   Calendar, Clock, Plus, FolderOpen, Check, X, Hash,
-  CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, RefreshCw, FileText
+  CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, FileText
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFolders } from "@/contexts/FolderContext";
@@ -18,6 +18,7 @@ import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 import { toast } from "sonner";
 import type { SummaryData } from "@/components/EditableSummary";
+import { groupTranscriptBySpeaker } from "@/lib/transcript-utils";
 
 const BUILTIN_TEMPLATES = [
   { id: "general", name: "General", icon: "📋" },
@@ -57,6 +58,7 @@ const generateLocalSummary = (
 
   if (allSentences.length === 0) {
     return {
+      title: "Meeting Notes",
       overview: hasSTTConfigured
         ? "No content was captured during this session. Try speaking or check that microphone (and system audio) access is allowed."
         : "No content was captured during this session. Select an STT model in Settings > AI Models for live transcription, or speak and ensure mic access is allowed.",
@@ -96,7 +98,16 @@ const generateLocalSummary = (
     actionItems.push({ text: "Review notes from this session", assignee: "You", done: false });
   }
 
+  // Derive a title from first substantial sentence (Granola-style auto-name fallback)
+  const firstSubstantial = allSentences.find((s) => s.length > 20);
+  const derivedTitle = firstSubstantial
+    ? firstSubstantial.length > 50
+      ? firstSubstantial.slice(0, 47).trim() + "..."
+      : firstSubstantial
+    : "Meeting Notes";
+
   return {
+    title: derivedTitle,
     overview: overviewParts.join(" ") || "A session was recorded.",
     keyPoints: keyPoints.length > 0 ? keyPoints : ["Session captured but no distinct points identified"],
     nextSteps: actionItems,
@@ -120,7 +131,7 @@ export default function NewNotePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string; startFresh?: boolean; triggerPauseAndSummarize?: boolean } | null;
-  const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture, setSessionScratch, getSessionScratch } = useRecording();
+  const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture, setSessionScratch, getSessionScratch } = useRecording();
   const { selectedSTTModel, selectedAIModel } = useModelSettings();
   const api = getElectronAPI();
 
@@ -172,6 +183,8 @@ export default function NewNotePage() {
   const userPausedRef = useRef(false);
   const triggeredPauseAndSummarizeRef = useRef(false);
   const lastStartFreshKeyRef = useRef<string | null>(null);
+  /** Granola-style: if user manually edited title, don't overwrite with AI-generated one */
+  const userHasEditedTitleRef = useRef(false);
   const { folders, createFolder } = useFolders();
   const { addNote, deleteNote } = useNotes();
   const [customTemplates, setCustomTemplates] = useState<Array<{ id: string; name: string; prompt: string }>>([]);
@@ -207,10 +220,10 @@ export default function NewNotePage() {
   useEffect(() => { transcriptRef.current = transcriptLines; }, [transcriptLines]);
   useEffect(() => { meetingTemplateRef.current = meetingTemplate; }, [meetingTemplate]);
 
-  // Sync personalNotes and title to session scratch so indicator pause-and-summarize can restore when navigating back
+  // Sync personalNotes, title, and user-edited state to session scratch so indicator pause-and-summarize can restore when navigating back
   useEffect(() => {
     if (activeSession?.noteId) {
-      setSessionScratch({ personalNotes, title: title || undefined });
+      setSessionScratch({ personalNotes, title: title || undefined, userEditedTitle: userHasEditedTitleRef.current });
     }
   }, [activeSession?.noteId, personalNotes, title, setSessionScratch]);
 
@@ -218,7 +231,7 @@ export default function NewNotePage() {
     if (!eventState?.triggerPauseAndSummarize) triggeredPauseAndSummarizeRef.current = false;
   }, [eventState?.triggerPauseAndSummarize]);
 
-  const generateNotes = useCallback(async (override?: { personalNotes?: string; title?: string }) => {
+  const generateNotes = useCallback(async (override?: { personalNotes?: string; title?: string; noteId?: string }) => {
     if (isSummarizing) return;
     setIsSummarizing(true);
     setTranscriptVisible(true);
@@ -264,9 +277,13 @@ export default function NewNotePage() {
       const timeRange = formatTimeRange(startTimeMs, elapsedSeconds);
 
       try {
+        // Granola-style: use user's title if they manually edited; otherwise use AI-generated
+        const finalTitle = userHasEditedTitleRef.current
+          ? useTitle || noteTitle
+          : (generatedSummary.title || noteTitle);
         addNote({
-          id: noteId,
-          title: generatedSummary.title || noteTitle,
+          id: override?.noteId ?? noteId,
+          title: finalTitle,
           date: dateStr,
           time: timeStr,
           duration: formatTime(elapsedSeconds),
@@ -280,13 +297,15 @@ export default function NewNotePage() {
         console.error('Failed to save note:', err);
         toast.error("Note could not be saved. Check console.");
       }
-      if (generatedSummary.title && generatedSummary.title !== noteTitle) {
+      // Granola-style: only auto-update title from summary if user hasn't manually edited it
+      if (!userHasEditedTitleRef.current && generatedSummary.title && generatedSummary.title !== noteTitle) {
         setTitle(generatedSummary.title);
       }
     } finally {
       setIsSummarizing(false);
     }
   }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, isSummarizing, activeSession?.startTime]);
+  // Note: userHasEditedTitleRef is a ref, not in deps
 
   // When indicator triggered "pause and summarize", we land here with state; run generateNotes with scratch and clear state
   useEffect(() => {
@@ -296,6 +315,7 @@ export default function NewNotePage() {
     const scratch = getSessionScratch();
     setPersonalNotes(scratch.personalNotes ?? '');
     setTitle(scratch.title ?? activeSession.title ?? '');
+    userHasEditedTitleRef.current = scratch.userEditedTitle ?? false;
     setRecordingState('paused');
     generateNotes({ personalNotes: scratch.personalNotes, title: scratch.title })
       .then(() => {
@@ -323,6 +343,7 @@ export default function NewNotePage() {
           clearSession();
           const newId = crypto.randomUUID();
           setNoteId(newId);
+          userHasEditedTitleRef.current = false;
           setTitle(eventState?.eventTitle ?? "");
           setSummary(null);
           setPersonalNotes("");
@@ -342,7 +363,7 @@ export default function NewNotePage() {
         if (hadSession && hadContent && usingRealAudio) {
           pauseAudioCapture()
             .catch(console.error)
-            .then(() => generateNotes())
+            .then(() => generateNotes({ personalNotes: scratch.personalNotes, title: scratch.title, noteId: activeSession.noteId }))
             .then(() => stopAudioCapture())
             .then(() => doStartNew())
             .catch((err) => {
@@ -366,8 +387,9 @@ export default function NewNotePage() {
           stopAudioCapture().catch(console.error);
         }
         startSession(noteId);
-        // Granola-style: only start capture when user explicitly clicked "Quick Note". Calendar/meeting landing = show "Start recording" button.
-        if (usingRealAudio && startFresh) {
+        // Auto-start when: Quick Note (startFresh) OR calendar/meeting entry (eventTitle/eventId)
+        const shouldAutoStart = startFresh || !!(eventState?.eventTitle ?? eventState?.eventId);
+        if (usingRealAudio && shouldAutoStart) {
           setUserHasStartedCapture(true);
           const meetingTitle = (eventState?.eventTitle ?? title) || undefined;
           startAudioCapture(selectedSTTModel || "", { meetingTitle }).catch((err) => {
@@ -378,7 +400,9 @@ export default function NewNotePage() {
           setUserHasStartedCapture(false); // Require explicit "Start recording" click
         }
       } else if (activeSession) {
-        setTitle(activeSession.title === "New note" ? "" : activeSession.title);
+        const scratch = getSessionScratch();
+        setTitle(scratch.title ?? (activeSession.title === "New note" ? "" : activeSession.title));
+        userHasEditedTitleRef.current = scratch.userEditedTitle ?? false;
         setUserHasStartedCapture(true); // Returning to existing session — was already capturing
         if (activeSession.isRecording) {
           setRecordingState("recording");
@@ -388,13 +412,58 @@ export default function NewNotePage() {
       console.error("NewNotePage mount error:", err);
     }
     return () => {};
-  }, [location.key, startFresh]);
+  }, [location.key, startFresh, getSessionScratch]);
 
   // Keep the session title synced with local title state
   useEffect(() => {
     if (recordingState !== "recording") return;
     updateSession({ isRecording: true, title: title || "New note" });
   }, [recordingState, title, updateSession]);
+
+  // Add/update draft note in list so it appears while recording (before summary is generated)
+  useEffect(() => {
+    if (
+      !activeSession ||
+      activeSession.noteId !== noteId ||
+      !userHasStartedCapture ||
+      (recordingState !== "recording" && recordingState !== "paused") ||
+      summary ||
+      isSummarizing
+    )
+      return;
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+    const startTimeMs = activeSession.startTime ?? now.getTime() - elapsedSeconds * 1000;
+    const timeRange = formatTimeRange(startTimeMs, elapsedSeconds);
+
+    addNote({
+      id: noteId,
+      title: title || "New note",
+      date: dateStr,
+      time: timeStr,
+      duration: formatTime(elapsedSeconds),
+      timeRange,
+      personalNotes,
+      transcript: transcriptLines,
+      summary: null,
+      folderId: selectedFolderId,
+    });
+  }, [
+    activeSession,
+    noteId,
+    userHasStartedCapture,
+    recordingState,
+    title,
+    personalNotes,
+    transcriptLines,
+    elapsedSeconds,
+    summary,
+    isSummarizing,
+    selectedFolderId,
+    addNote,
+  ]);
 
   // Sync recording state with main process (auto-pause disabled — manual pause only)
   useEffect(() => {
@@ -558,7 +627,7 @@ export default function NewNotePage() {
       : elapsed;
   const isStopped = recordingState === "stopped";
   const showSummaryPanel = (recordingState === "paused" || recordingState === "stopped") && (summary || isSummarizing);
-  const showTemplateSelector = recordingState !== "recording" && (currentTranscript.length > 0 || showSummaryPanel);
+  const showTemplateSelector = !!(summary || isSummarizing);
 
   const folderChip = (
     <>
@@ -663,17 +732,27 @@ export default function NewNotePage() {
           {(showSummaryPanel || showTemplateSelector) && (
             <div className="flex items-center gap-1.5">
               {showSummaryPanel && (
-                <NotesViewToggle viewMode={viewMode} onViewModeChange={handleViewModeChange} />
+                <NotesViewToggle
+                  viewMode={viewMode}
+                  onViewModeChange={handleViewModeChange}
+                  transcriptVisible={transcriptVisible}
+                  onToggleTranscript={() => setTranscriptVisible(!transcriptVisible)}
+                />
               )}
               <div ref={templateMenuRef} className="relative flex items-center gap-0.5">
                 <button
                   onClick={() => setShowTemplateMenu(!showTemplateMenu)}
-                  className="flex items-center gap-1 rounded-md border border-border px-2 py-1.5 text-[12px] text-foreground hover:bg-secondary transition-colors"
-                  title="Switch template"
+                  disabled={isSummarizing}
+                  className="flex items-center gap-1 rounded-md border border-border px-2 py-1.5 text-[12px] text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+                  title={showSummaryPanel ? "Regenerate with different template" : "Generate summary with template"}
                 >
                   <span>{MEETING_TEMPLATES.find((t) => t.id === meetingTemplate)?.icon ?? "📋"}</span>
                   <span className="max-w-[100px] truncate">{MEETING_TEMPLATES.find((t) => t.id === meetingTemplate)?.name ?? "General"}</span>
-                  <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", showTemplateMenu && "rotate-180")} />
+                  {isSummarizing ? (
+                    <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className={cn("h-3 w-3 text-muted-foreground transition-transform", showTemplateMenu && "rotate-180")} />
+                  )}
                 </button>
                 {showTemplateMenu && (
                   <div className="absolute left-0 top-full mt-1 w-52 rounded-lg border border-border bg-popover shadow-lg z-50 overflow-hidden py-1">
@@ -684,6 +763,10 @@ export default function NewNotePage() {
                           setMeetingTemplate(t.id);
                           meetingTemplateRef.current = t.id;
                           setShowTemplateMenu(false);
+                          generateNotes().catch((err) => {
+                            console.error("Summary failed:", err);
+                            toast.error("Summary failed. Try again.");
+                          });
                         }}
                         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[13px] text-foreground hover:bg-secondary transition-colors"
                       >
@@ -694,17 +777,9 @@ export default function NewNotePage() {
                         {meetingTemplate === t.id && <Check className="h-3.5 w-3.5 text-accent flex-shrink-0" />}
                       </button>
                     ))}
-                    <p className="px-3 py-1.5 text-[10px] text-muted-foreground border-t border-border mt-1">Select a template, then click the refresh button to generate or regenerate the summary.</p>
+                    <p className="px-3 py-1.5 text-[10px] text-muted-foreground border-t border-border mt-1">Select a template to generate or regenerate summary.</p>
                   </div>
                 )}
-                <button
-                  onClick={() => { setShowTemplateMenu(false); generateNotes(); }}
-                  disabled={isSummarizing}
-                  className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-50"
-                  title={showSummaryPanel ? "Regenerate summary with selected template" : "Generate summary with selected template"}
-                >
-                  <RefreshCw className={cn("h-3.5 w-3.5", isSummarizing && "animate-spin")} />
-                </button>
               </div>
               {showSummaryPanel && (
                 <>
@@ -769,7 +844,10 @@ export default function NewNotePage() {
                   <input
                     ref={titleRef}
                     value={title}
-                    onChange={(e) => setTitle(e.target.value)}
+                    onChange={(e) => {
+                      userHasEditedTitleRef.current = true;
+                      setTitle(e.target.value);
+                    }}
                     onBlur={() => setIsEditingTitle(false)}
                     onKeyDown={(e) => e.key === "Enter" && setIsEditingTitle(false)}
                     className="mb-3 w-full font-display text-2xl text-foreground bg-transparent border-none outline-none focus:ring-0"
@@ -894,40 +972,12 @@ export default function NewNotePage() {
                   Start recording
                 </button>
               )}
-              {recordingState === "paused" && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (transcriptRef.current.length > 0 || personalNotes.trim().length > 0) {
-                      generateNotes().catch((err) => {
-                        console.error("Summary failed:", err);
-                        toast.error("Summary failed. Try again.");
-                      });
-                    } else {
-                      toast.error("Add notes or transcript first.");
-                    }
-                  }}
-                  disabled={isSummarizing}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isSummarizing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Generating...
-                    </>
-                  ) : (
-                    <>
-                      <FileText className="h-4 w-4" />
-                      Generate summary
-                    </>
-                  )}
-                </button>
-              )}
               <AskBar
                 context="meeting"
                 meetingTitle={title || "New note"}
                 recordingState={recordingState}
                 transcriptVisible={transcriptVisible}
+                hideTranscriptToggle={showSummaryPanel}
                 onResumeRecording={handleResume}
                 onPauseRecording={() => {
                   userPausedRef.current = true;
@@ -938,13 +988,39 @@ export default function NewNotePage() {
                 }}
                 onToggleTranscript={() => setTranscriptVisible(!transcriptVisible)}
                 elapsed={elapsed}
+                generateSummarySlot={
+                  recordingState === "paused" ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (transcriptRef.current.length > 0 || personalNotes.trim().length > 0) {
+                          generateNotes().catch((err) => {
+                            console.error("Summary failed:", err);
+                            toast.error("Summary failed. Try again.");
+                          });
+                        } else {
+                          toast.error("Add notes or transcript first.");
+                        }
+                      }}
+                      disabled={isSummarizing}
+                      className="flex items-center gap-1.5 rounded-full border border-border bg-card shadow-lg px-3 py-2.5 text-sm font-medium text-foreground hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isSummarizing ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <FileText className="h-3.5 w-3.5" />
+                      )}
+                      <span>Summary</span>
+                    </button>
+                  ) : undefined
+                }
               />
             </div>
           </div>
 
           {/* Transcript side panel — hidden during active recording if real-time transcription is off */}
           {transcriptVisible && (showRealTimeTranscript || recordingState !== "recording") && (
-            <div className="w-96 flex-shrink-0 border-l border-border bg-card/50 overflow-y-auto rounded-tl-2xl rounded-tr-2xl">
+            <div className="w-[36rem] flex-shrink-0 border-l border-border bg-card/50 overflow-y-auto rounded-tl-2xl rounded-tr-2xl">
               <div className="px-4 py-3 border-b border-border">
                 <div className="flex items-center justify-between gap-1">
                   <span className="text-[12px] font-medium uppercase tracking-wider text-foreground/80">
@@ -986,16 +1062,19 @@ export default function NewNotePage() {
                   )}
                 </div>
               </div>
-              <div className="p-3 space-y-2">
-                {currentTranscript
-                  .map((line, idx) => ({ line, idx }))
-                  .filter(({ line }) => !transcriptSearch || line.text.toLowerCase().includes(transcriptSearch.toLowerCase()))
-                  .map(({ line, idx }) => {
-                    const isMe = line.speaker === "You";
+              <div className="p-3 space-y-4">
+                {(() => {
+                  const filtered = currentTranscript
+                    .map((line, idx) => ({ line, originalIndex: idx }))
+                    .filter(({ line }) => !transcriptSearch || line.text.toLowerCase().includes(transcriptSearch.toLowerCase()));
+                  const groups = groupTranscriptBySpeaker(filtered.map(({ line, originalIndex }) => ({ ...line, originalIndex })));
+                  const searchRegex = transcriptSearch ? new RegExp(`(${transcriptSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi") : null;
+                  return groups.map((group) => {
+                    const isMe = group.speaker === "You";
                     const displayLabel = isMe ? "Me" : "Them";
                     return (
                       <div
-                        key={idx}
+                        key={group.indices.join("-")}
                         className={cn(
                           "animate-fade-in group flex flex-col items-end gap-0.5",
                           !isMe && "items-start"
@@ -1010,11 +1089,11 @@ export default function NewNotePage() {
                           )}
                         >
                           <p className="text-[12px] font-medium text-foreground/70 mb-0.5">
-                            {displayLabel} · {line.time}
+                            {displayLabel}
                           </p>
                           <p>
-                            {transcriptSearch ? (
-                              line.text.split(new RegExp(`(${transcriptSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi")).map((part, j) =>
+                            {searchRegex ? (
+                              group.text.split(searchRegex).map((part, j) =>
                                 part.toLowerCase() === transcriptSearch.toLowerCase() ? (
                                   <mark key={j} className="bg-accent/20 text-foreground rounded-sm px-0.5">{part}</mark>
                                 ) : (
@@ -1022,7 +1101,7 @@ export default function NewNotePage() {
                                 )
                               )
                             ) : (
-                              line.text
+                              group.text
                             )}
                           </p>
                         </div>
@@ -1030,7 +1109,13 @@ export default function NewNotePage() {
                           <div className={cn("flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity", !isMe && "self-start")}>
                             <button
                               onClick={() => {
-                                const t = `[${line.time}] ${line.speaker}: ${line.text}`;
+                                const t = group.indices
+                                  .map((i) => {
+                                    const l = currentTranscript[i];
+                                    return l ? `[${l.time}] ${l.speaker}: ${l.text}` : "";
+                                  })
+                                  .filter(Boolean)
+                                  .join("\n");
                                 void (navigator.clipboard?.writeText(t) ?? Promise.resolve());
                               }}
                               className="rounded p-1 text-muted-foreground hover:text-foreground"
@@ -1039,7 +1124,7 @@ export default function NewNotePage() {
                               <Copy className="h-3 w-3" />
                             </button>
                             <button
-                              onClick={() => removeTranscriptLineAt(idx)}
+                              onClick={() => removeTranscriptLinesAt(group.indices)}
                               className="rounded p-1 text-muted-foreground hover:text-destructive"
                               title="Delete"
                             >
@@ -1049,7 +1134,8 @@ export default function NewNotePage() {
                         )}
                       </div>
                     );
-                  })}
+                  });
+                })()}
                 {!transcriptSearch && recordingState === "recording" && usingRealAudio && !selectedSTTModel && (
                   <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2.5 mb-2">
                     <p className="text-[11px] text-blue-600 dark:text-blue-400 leading-relaxed">

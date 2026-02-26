@@ -53,6 +53,19 @@ function restartChunkTimer(): void {
 }
 
 let meetingContextVocabulary: string[] = []
+let meetingTitleForPrompt = ''
+let sttVocabularyTerms: string[] = []
+
+/** Build natural-sentence prompt for Whisper (proper nouns, domain terms). Max ~224 tokens. */
+function buildWhisperPrompt(title: string, vocabulary: string[]): string {
+  const parts: string[] = []
+  if (title?.trim()) parts.push(`${title.trim()} meeting.`)
+  if (vocabulary.length > 0) {
+    const terms = vocabulary.slice(0, 40).join(', ')
+    parts.push(`Discussion about ${terms}.`)
+  }
+  return parts.join(' ') || 'Meeting transcription.'
+}
 
 export async function startRecording(
   options: { sttModel: string; deviceId?: string; meetingTitle?: string; vocabulary?: string[] },
@@ -75,8 +88,9 @@ export async function startRecording(
   resetContext()
 
   // Merge vocabulary: settings + meeting title tokens + explicit vocabulary
-  const titleTerms = options.meetingTitle
-    ? options.meetingTitle.split(/\s+/).filter(w => w.length > 2)
+  meetingTitleForPrompt = options.meetingTitle?.trim() || ''
+  const titleTerms = meetingTitleForPrompt
+    ? meetingTitleForPrompt.split(/\s+/).filter(w => w.length > 2)
     : []
   meetingContextVocabulary = [
     ...(options.vocabulary || []),
@@ -89,9 +103,12 @@ export async function startRecording(
       ...(typeof fromSettings === 'string' ? fromSettings.split(/[,\n]+/).map(t => t.trim()).filter(Boolean) : []),
       ...meetingContextVocabulary,
     ].filter((v, i, a) => a.indexOf(v) === i).slice(0, 100)
-    customVocabulary = terms.join(', ')
+    sttVocabularyTerms = terms
+    // Natural-sentence prompt for Whisper (Granola/Notion quality)
+    customVocabulary = buildWhisperPrompt(meetingTitleForPrompt, terms)
   } catch {
-    customVocabulary = meetingContextVocabulary.join(', ')
+    sttVocabularyTerms = meetingContextVocabulary
+    customVocabulary = buildWhisperPrompt(meetingTitleForPrompt, meetingContextVocabulary)
   }
 
   if (currentSTTModel) {
@@ -272,8 +289,10 @@ async function processBufferedAudio(): Promise<void> {
         const text = await sttSystemDarwin(wavBuffer)
         sttResult = { text, words: [] }
       } else {
-        const vocab = customVocabulary ? customVocabulary.split(/[,\n]+/).map(t => t.trim()).filter(Boolean).slice(0, 100) : undefined
-        const text = await routeSTT(wavBuffer, currentSTTModel, vocab)
+        // vocabulary: for Deepgram keywords; prompt: for Groq/OpenAI Whisper
+        const vocab = sttVocabularyTerms.length > 0 ? sttVocabularyTerms : undefined
+        const prompt = customVocabulary || undefined
+        const text = await routeSTT(wavBuffer, currentSTTModel, vocab, prompt)
         sttResult = { text, words: [] }
       }
 
@@ -356,14 +375,16 @@ function filterHallucinatedTranscript(text: string): string | null {
 
   const lower = t.toLowerCase()
 
-  // Known video/streaming hallucination phrases
+  // Known video/streaming hallucination phrases (Granola/Notion-quality filtering)
   const hallucinationPatterns = [
     /thank\s+you\s+for\s+watching/i,
+    /thanks\s+for\s+watching/i,
     /subscribe\s*(to\s+our\s+channel)?/i,
     /like\s+and\s+subscribe/i,
-    /see\s+you\s+next\s+time/i,
+    /see\s+you\s+(in\s+the\s+)?next\s+/i,
     /don't\s+forget\s+to\s+subscribe/i,
     /hit\s+the\s+(bell|subscribe)\s+button/i,
+    /^\[music\]$/i, /^\[applause\]$/i, /^\[blank_audio\]$/i,
   ]
   for (const pat of hallucinationPatterns) {
     if (pat.test(lower)) return null
@@ -381,6 +402,9 @@ function filterHallucinatedTranscript(text: string): string | null {
       }
     }
   }
+
+  // Long phrase repetition (10+ chars repeated 3+ times)
+  if (/(.{10,}?)(\s+\1){2,}/.test(t)) return null
 
   return t
 }

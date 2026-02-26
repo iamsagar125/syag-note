@@ -26,6 +26,8 @@ interface RecordingContextType {
   transcriptLines: TranscriptLine[];
   /** Remove a transcript line by index (e.g. for delete-chunk in transcript panel). */
   removeTranscriptLineAt: (index: number) => void;
+  /** Remove multiple transcript lines by indices (e.g. when deleting a grouped block). */
+  removeTranscriptLinesAt: (indices: number[]) => void;
   isCapturing: boolean;
   usingWebSpeech: boolean;
   /** Set when capture failed (e.g. no mic, worklet load failed). Clear on retry or when user dismisses. */
@@ -35,9 +37,9 @@ interface RecordingContextType {
   stopAudioCapture: () => Promise<void>;
   pauseAudioCapture: () => Promise<void>;
   resumeAudioCapture: (sttModel?: string) => Promise<void>;
-  /** Scratch for current session (personalNotes, title) so indicator pause-and-summarize can restore state when navigating back. */
-  setSessionScratch: (scratch: { personalNotes?: string; title?: string }) => void;
-  getSessionScratch: () => { personalNotes?: string; title?: string };
+  /** Scratch for current session (personalNotes, title, userEditedTitle) so indicator pause-and-summarize can restore state when navigating back. */
+  setSessionScratch: (scratch: { personalNotes?: string; title?: string; userEditedTitle?: boolean }) => void;
+  getSessionScratch: () => { personalNotes?: string; title?: string; userEditedTitle?: boolean };
 }
 
 const RecordingContext = createContext<RecordingContextType | undefined>(undefined);
@@ -55,11 +57,11 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const cleanupRef = useRef<(() => void) | null>(null);
   const speechRecRef = useRef<any>(null);
   const elapsedRef = useRef(0);
-  const sessionScratchRef = useRef<{ personalNotes?: string; title?: string }>({});
+  const sessionScratchRef = useRef<{ personalNotes?: string; title?: string; userEditedTitle?: boolean }>({});
 
   const api = getElectronAPI();
 
-  const setSessionScratch = useCallback((scratch: { personalNotes?: string; title?: string }) => {
+  const setSessionScratch = useCallback((scratch: { personalNotes?: string; title?: string; userEditedTitle?: boolean }) => {
     sessionScratchRef.current = { ...sessionScratchRef.current, ...scratch };
   }, []);
   const getSessionScratch = useCallback(() => ({ ...sessionScratchRef.current }), []);
@@ -71,6 +73,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       setTranscriptLines((prev) => [...prev, chunk]);
     });
 
+    // Note: auto-paused/auto-resumed are not currently emitted (auto-pause on silence is disabled in capture.ts).
+    // Manual pause is the only path that updates isRecording.
     const cleanupStatus = api.recording.onRecordingStatus((status) => {
       if (status.state === 'auto-paused') {
         setActiveSession(prev => prev ? { ...prev, isRecording: false } : null);
@@ -89,6 +93,11 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       if (index < 0 || index >= prev.length) return prev;
       return prev.filter((_, i) => i !== index);
     });
+  }, []);
+
+  const removeTranscriptLinesAt = useCallback((indices: number[]) => {
+    const set = new Set(indices);
+    setTranscriptLines((prev) => prev.filter((_, i) => !set.has(i)));
   }, []);
 
   // Global elapsed timer -- ticks regardless of which page is mounted
@@ -397,7 +406,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   return (
     <RecordingContext.Provider value={{
       activeSession, isActive, startSession, resumeSession, updateSession, clearSession,
-      transcriptLines, removeTranscriptLineAt, isCapturing, usingWebSpeech, captureError, clearCaptureError,
+      transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, usingWebSpeech, captureError, clearCaptureError,
       startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture,
       setSessionScratch, getSessionScratch
     }}>

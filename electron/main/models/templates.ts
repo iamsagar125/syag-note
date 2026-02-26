@@ -15,20 +15,25 @@ export interface EnhancedNotes {
   parsed: ParsedNotes
 }
 
+export interface ParsedActionItem {
+  text: string
+  assignee: string
+  dueDate: string | null
+  done: boolean
+}
+
 /** Structured data extracted from the markdown post-generation */
 export interface ParsedNotes {
   tldr: string
   topics: Array<{
     title: string
-    bullets: string[]
+    bullets: Array<{ text: string; subBullets?: string[] }>
+    actionItems?: ParsedActionItem[]
+    decisions?: string[]
   }>
+  /** Flattened for backward compat */
   decisions: string[]
-  actionItems: Array<{
-    text: string
-    assignee: string
-    dueDate: string | null
-    done: boolean
-  }>
+  actionItems: ParsedActionItem[]
   openQuestions: string[]
 }
 
@@ -83,7 +88,7 @@ FORMATTING RULES
 - No numbered lists
 - No paragraphs or narrative prose
 - Direct quotes only when exact wording matters (commitments, strong reactions) — use > blockquote
-- Action items format: → **Name** to [task] (by [date] if mentioned)
+- Action items: → **Name** to [task] (by [date] if mentioned); for unassigned use → [task]. Include all action items.
 - Use **Me** when {{USER_NAME}} is the owner
 
 LENGTH
@@ -102,8 +107,7 @@ NEVER
 EDGE CASES
 - Transcript very short or missing → generate only from user notes, don't fabricate
 - Both empty → return only the title line and "No notes captured."
-- Action items with no owner → mark as **[Unassigned]**
-- Action items with no deadline → omit the "(by …)" part, don't write "[No deadline]"
+- Action items: include all. For unassigned use → [task]; for assigned use → **Name** to [task]. Add (by [date]) only when a date was mentioned.
 
 OUTPUT FORMAT (follow exactly)
 
@@ -114,22 +118,19 @@ OUTPUT FORMAT (follow exactly)
 **[Topic 1 — specific name, not "Discussion"]**
 - [Key point]
 - [Key point]
-  - [Supporting detail]
+  - [Sub-bullet or supporting detail]
+  - [Sub-bullet]
 → **Name** to [action] (by [date])
+→ **Decision:** [decision text]
+  - [Optional sub-bullet for decision]
+  - [Optional sub-bullet]
 
 **[Topic 2]**
 - [Key point]
-- [Key point]
+  - [Sub-bullet]
+→ **Name** to [action]
 
-**Decisions**
-- [Decision — only if explicit. Skip section entirely if none.]
-
-**Action Items**
-- → **Name** to [task] (by [date])
-- → **Name** to [task]
-
-**Open Questions**
-- [Anything unresolved — skip section entirely if none.]`
+Place action items and decisions under the topic they belong to. Use sub-bullets (  - ) for supporting detail. Omit action items or decisions if none apply to that topic.`
 
 // ---------------------------------------------------------------------------
 // Template prompts — each extends the system preamble
@@ -416,14 +417,20 @@ export function parseEnhancedNotes(markdown: string): ParsedNotes {
   let tldr = ''
   const topics: ParsedNotes['topics'] = []
   const decisions: string[] = []
-  const actionItems: ParsedNotes['actionItems'] = []
+  const actionItems: ParsedActionItem[] = []
   const openQuestions: string[] = []
 
   let currentSection: 'topics' | 'decisions' | 'actions' | 'questions' | null = null
-  let currentTopic: { title: string; bullets: string[] } | null = null
+  let currentTopic: {
+    title: string
+    bullets: Array<{ text: string; subBullets?: string[] }>
+    actionItems?: ParsedActionItem[]
+    decisions?: string[]
+  } | null = null
 
   for (const line of lines) {
     const trimmed = line.trim()
+    const isSubBullet = /^\s{2,}-/.test(line) || (line.startsWith('  -') && !line.startsWith('   '))
 
     // TL;DR line
     if (/^\*?\*?TL;DR:?\*?\*?\s*/i.test(trimmed)) {
@@ -431,20 +438,23 @@ export function parseEnhancedNotes(markdown: string): ParsedNotes {
       continue
     }
 
-    // Section headers
+    // Section headers (backward compat for old format)
     if (/^\*\*Action Items\*\*/i.test(trimmed)) {
       flushTopic()
       currentSection = 'actions'
+      currentTopic = null
       continue
     }
     if (/^\*\*Decisions?\*\*/i.test(trimmed)) {
       flushTopic()
       currentSection = 'decisions'
+      currentTopic = null
       continue
     }
     if (/^\*\*Open Questions?\*\*/i.test(trimmed)) {
       flushTopic()
       currentSection = 'questions'
+      currentTopic = null
       continue
     }
 
@@ -452,27 +462,58 @@ export function parseEnhancedNotes(markdown: string): ParsedNotes {
     if (/^\*\*[^*]+\*\*/.test(trimmed) && !trimmed.startsWith('**TL;DR')) {
       flushTopic()
       const title = trimmed.replace(/^\*\*/, '').replace(/\*\*.*$/, '').trim()
-
-      // Skip the title line (first bold line with date)
       if (/—\s*\d/.test(trimmed) || /\d{4}/.test(trimmed)) continue
-
       currentSection = 'topics'
-      currentTopic = { title, bullets: [] }
+      currentTopic = { title, bullets: [], actionItems: [], decisions: [] }
       continue
     }
 
-    // Action items (→ or - → prefix)
-    if (/^[-→⟶]\s*→?\s*\*\*/.test(trimmed) || /^→\s*\*\*/.test(trimmed)) {
-      const parsed = parseActionItem(trimmed)
-      if (parsed) {
-        actionItems.push(parsed)
-        if (currentTopic) currentTopic.bullets.push(trimmed)
+    // Decision line: → **Decision:** [text]
+    const decisionMatch = trimmed.match(/^→\s*\*\*Decision:?\*\*\s*(.+)$/i)
+    if (decisionMatch) {
+      const text = decisionMatch[1].trim()
+      if (currentTopic && text) {
+        currentTopic.decisions = currentTopic.decisions || []
+        currentTopic.decisions.push(text)
+        decisions.push(text)
       }
       continue
     }
 
-    // Bullets
-    if (/^[-•]\s+/.test(trimmed) || /^\s+-\s+/.test(line)) {
+    // Action items (→ **Name** to ... or → [task])
+    if (/^→\s*\*\*[^*]+\*\*/.test(trimmed)) {
+      const parsed = parseActionItem(trimmed)
+      if (parsed) {
+        actionItems.push(parsed)
+        if (currentTopic) {
+          currentTopic.actionItems = currentTopic.actionItems || []
+          currentTopic.actionItems.push(parsed)
+        }
+      }
+      continue
+    }
+
+    // Sub-bullet (2+ space indent)
+    if (isSubBullet) {
+      const subText = line.replace(/^\s*-\s*/, '').trim()
+      if (!subText) continue
+      if (currentTopic && currentTopic.bullets.length > 0) {
+        const last = currentTopic.bullets[currentTopic.bullets.length - 1]
+        last.subBullets = last.subBullets || []
+        last.subBullets.push(subText)
+      } else if (currentSection === 'decisions') {
+        decisions.push(subText)
+      } else if (currentSection === 'actions') {
+        const item = parseActionItem(trimmed)
+        if (item) actionItems.push(item)
+      } else if (currentSection === 'questions') {
+        openQuestions.push(subText)
+      }
+      continue
+    }
+
+    // Top-level bullets
+    if (/^[-•]\s+/.test(trimmed)) {
       const bullet = trimmed.replace(/^[-•]\s+/, '').trim()
       if (!bullet) continue
 
@@ -483,14 +524,13 @@ export function parseEnhancedNotes(markdown: string): ParsedNotes {
         case 'actions':
           const item = parseActionItem(trimmed)
           if (item) actionItems.push(item)
-          else actionItems.push({ text: bullet, assignee: '[Unassigned]', dueDate: null, done: false })
           break
         case 'questions':
           openQuestions.push(bullet)
           break
         case 'topics':
         default:
-          if (currentTopic) currentTopic.bullets.push(trimmed.replace(/^[-•]\s+/, ''))
+          if (currentTopic) currentTopic.bullets.push({ text: bullet })
           break
       }
     }
@@ -501,25 +541,34 @@ export function parseEnhancedNotes(markdown: string): ParsedNotes {
   return { tldr, topics, decisions, actionItems, openQuestions }
 
   function flushTopic() {
-    if (currentTopic && currentTopic.bullets.length > 0) {
-      topics.push(currentTopic)
+    if (currentTopic && (currentTopic.bullets.length > 0 || (currentTopic.actionItems?.length ?? 0) > 0 || (currentTopic.decisions?.length ?? 0) > 0)) {
+      topics.push({
+        ...currentTopic,
+        bullets: currentTopic.bullets,
+        actionItems: currentTopic.actionItems?.length ? currentTopic.actionItems : undefined,
+        decisions: currentTopic.decisions?.length ? currentTopic.decisions : undefined,
+      })
     }
     currentTopic = null
   }
 }
 
-function parseActionItem(line: string): ParsedNotes['actionItems'][0] | null {
-  const patterns = [
-    /→\s*\*\*(?<assignee>[^*]+)\*\*\s*(?:to\s+)?(?<text>.+?)(?:\(by\s+(?<due>[^)]+)\))?\s*$/i,
-    /\*\*(?<assignee>[^*]+)\*\*[:\s]+(?<text>.+?)(?:\s*—\s*by\s+(?<due>.+))?\s*$/i,
+function parseActionItem(line: string): ParsedActionItem | null {
+  const patterns: Array<{ re: RegExp; hasAssignee: boolean }> = [
+    { re: /→\s*\*\*(?<assignee>[^*]+)\*\*\s*(?:to\s+)?(?<text>.+?)(?:\(by\s+(?<due>[^)]+)\))?\s*$/i, hasAssignee: true },
+    { re: /\*\*(?<assignee>[^*]+)\*\*[:\s]+(?<text>.+?)(?:\s*—\s*by\s+(?<due>.+))?\s*$/i, hasAssignee: true },
+    // Plain action without assignee: "→ task" or "- task" or "- task (by date)"
+    { re: /^[-→•]\s+(?<text>.+?)(?:\s*\(by\s+(?<due>[^)]+)\))?\s*$/i, hasAssignee: false },
   ]
 
-  for (const pattern of patterns) {
-    const match = line.match(pattern)
-    if (match?.groups) {
+  for (const { re, hasAssignee } of patterns) {
+    const match = line.match(re)
+    if (match?.groups?.text) {
+      const text = match.groups.text.trim().replace(/\s*\(by\s+[^)]+\)\s*$/, '').trim()
+      if (!text) continue
       return {
-        assignee: match.groups.assignee.trim(),
-        text: match.groups.text.trim().replace(/\s*\(by\s+[^)]+\)\s*$/, ''),
+        assignee: hasAssignee ? (match.groups.assignee?.trim() ?? '') : '',
+        text,
         dueDate: match.groups.due?.trim() ?? null,
         done: false,
       }
@@ -697,12 +746,14 @@ export function parsedToMeetingSummary(
     done: a.done,
   }))
   const nextSteps = parsed.actionItems.map(a => ({
-    text: a.text,
-    assignee: a.assignee,
-    done: a.done,
-    dueDate: a.dueDate ?? undefined,
-  }))
-  const keyPoints = parsed.topics.flatMap(t => t.bullets.slice(0, 2)).filter(Boolean)
+      text: a.text,
+      assignee: a.assignee,
+      done: a.done,
+      dueDate: a.dueDate ?? undefined,
+    }))
+  const keyPoints = parsed.topics.flatMap(t =>
+    t.bullets.slice(0, 2).map(b => (typeof b === 'string' ? b : b.text)).filter(Boolean)
+  )
 
   return {
     title,
@@ -712,7 +763,14 @@ export function parsedToMeetingSummary(
     decisions: parsed.decisions,
     discussionTopics: parsed.topics.map(t => ({
       topic: t.title,
-      summary: t.bullets.map(b => (b.startsWith('-') ? b : `- ${b}`)).join('\n') || '-',
+      summary: t.bullets.map(b => {
+        const bt = typeof b === 'string' ? b : b.text
+        const subs = typeof b === 'string' ? undefined : b.subBullets
+        if (subs?.length) {
+          return `- ${bt}\n${subs.map(s => `  - ${s}`).join('\n')}`
+        }
+        return bt.startsWith('-') ? bt : `- ${bt}`
+      }).join('\n') || '-',
       speakers: [],
     })),
     actionItems,

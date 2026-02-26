@@ -6,6 +6,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { AskBar } from "@/components/AskBar";
 import { useFolders } from "@/contexts/FolderContext";
 import { useNotes } from "@/contexts/NotesContext";
+import { useRecording } from "@/contexts/RecordingContext";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { ICSDialog } from "@/components/ICSDialog";
 import { EventDetailSheet } from "@/components/EventDetailSheet";
@@ -17,6 +18,7 @@ const Index = () => {
   const [searchParams] = useSearchParams();
   const { folders } = useFolders();
   const { notes, deleteNote, updateNoteFolder } = useNotes();
+  const { activeSession } = useRecording();
   const { events, icsSource } = useCalendar();
   const [icsOpen, setIcsOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -74,15 +76,20 @@ const Index = () => {
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  {folderNotes.map((n) => (
+                  {folderNotes.map((n) => {
+                    const isRecording = activeSession?.noteId === n.id && !n.summary;
+                    return (
                     <div key={n.id} className="group flex items-center gap-2 rounded-lg px-3 py-2.5 hover:bg-card border border-transparent hover:border-border transition-colors">
                       <button
-                        onClick={() => navigate(`/note/${n.id}`)}
+                        onClick={() => navigate(isRecording ? `/new-note?session=${n.id}` : `/note/${n.id}`)}
                         className="flex flex-1 items-center gap-3 text-left min-w-0"
                       >
                         <FileText className="h-4 w-4 text-muted-foreground/40 flex-shrink-0" />
                         <div className="flex-1 min-w-0">
                           <h3 className="font-display text-[15px] text-foreground truncate">{n.title}</h3>
+                          {isRecording && (
+                            <span className="text-[10px] text-accent font-medium">Recording</span>
+                          )}
                         </div>
                       </button>
                       <span className="text-[11px] text-muted-foreground flex-shrink-0">{n.timeRange ?? n.time}</span>
@@ -93,7 +100,8 @@ const Index = () => {
                         onMoveToFolder={updateNoteFolder}
                       />
                     </div>
-                  ))}
+                  );
+                  })}
                 </div>
               )}
             </div>
@@ -197,15 +205,20 @@ const Index = () => {
                       {date}
                     </h3>
                     <div className="space-y-0.5">
-                      {items.map((n) => (
+                      {items.map((n) => {
+                        const isRecording = activeSession?.noteId === n.id && !n.summary;
+                        return (
                         <div key={n.id} className="group flex items-center gap-2 rounded-lg px-3 py-2.5 hover:bg-card border border-transparent hover:border-border transition-colors">
                           <button
-                            onClick={() => navigate(`/note/${n.id}`)}
+                            onClick={() => navigate(isRecording ? `/new-note?session=${n.id}` : `/note/${n.id}`)}
                             className="flex flex-1 items-center gap-3 text-left min-w-0"
                           >
                             <FileText className="h-4 w-4 text-muted-foreground/40 flex-shrink-0" />
                             <div className="flex-1 min-w-0">
                               <h3 className="font-display text-[15px] text-foreground truncate">{n.title}</h3>
+                              {isRecording && (
+                                <span className="text-[10px] text-accent font-medium">Recording</span>
+                              )}
                             </div>
                           </button>
                           <span className="text-[11px] text-muted-foreground flex-shrink-0">{n.timeRange ?? n.time}</span>
@@ -216,7 +229,8 @@ const Index = () => {
                             onMoveToFolder={updateNoteFolder}
                           />
                         </div>
-                      ))}
+                      );
+                      })}
                     </div>
                   </div>
                 ))}

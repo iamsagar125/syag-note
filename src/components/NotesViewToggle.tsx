@@ -1,14 +1,18 @@
 import { cn } from "@/lib/utils";
+import { Eye, EyeOff } from "lucide-react";
 
 type ViewMode = "my-notes" | "ai-notes";
 
 interface NotesViewToggleProps {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
+  transcriptVisible?: boolean;
+  onToggleTranscript?: () => void;
 }
 
-export function NotesViewToggle({ viewMode, onViewModeChange }: NotesViewToggleProps) {
+export function NotesViewToggle({ viewMode, onViewModeChange, transcriptVisible, onToggleTranscript }: NotesViewToggleProps) {
   return (
+    <div className="flex items-center gap-1">
     <div className="flex items-center rounded-full border border-border bg-card overflow-hidden">
       {/* My Notes icon (hamburger lines) */}
       <button
@@ -44,6 +48,19 @@ export function NotesViewToggle({ viewMode, onViewModeChange }: NotesViewToggleP
           <path d="M12 9l.7 2L15 12l-2.3.7-.7 2-.7-2L9 12l2.3-.7.7-2z" />
         </svg>
       </button>
+    </div>
+    {onToggleTranscript && (
+      <button
+        onClick={onToggleTranscript}
+        className={cn(
+          "flex items-center justify-center p-2 rounded-full border border-border transition-colors",
+          transcriptVisible ? "bg-secondary text-foreground" : "bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+        )}
+        title={transcriptVisible ? "Hide transcript" : "Show transcript"}
+      >
+        {transcriptVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    )}
     </div>
   );
 }

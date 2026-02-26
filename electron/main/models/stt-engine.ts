@@ -338,7 +338,7 @@ for line in sys.stdin:
         req = json.loads(line.strip())
         audio_path = req.get("audio_path", "")
         prompt = req.get("prompt", "")
-        kwargs = {"path_or_hf_repo": _model_repo, "language": "en", "word_timestamps": True}
+        kwargs = {"path_or_hf_repo": _model_repo, "language": "en", "word_timestamps": True, "condition_on_previous_text": False}
         if prompt:
             kwargs["initial_prompt"] = prompt
         result = mlx_whisper.transcribe(audio_path, **kwargs)
@@ -548,7 +548,8 @@ function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string,
       '--language', 'en',
       '-t', String(sttThreadCount),
       '--beam-size', '5',
-      '--entropy-thold', '2.8',
+      '--entropy-thold', '2.4',
+      '--logprob-thold', '-1.0',
       '--no-speech-thold', '0.6',
       '--word-thold', '0.01',
       '--max-len', '0',
@@ -558,9 +559,9 @@ function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string,
     ]
 
     if (customVocabulary) {
-      const terms = customVocabulary.split('\n').map(t => t.trim()).filter(Boolean)
-      if (terms.length > 0) {
-        args.push('--prompt', terms.join(', '))
+      const prompt = customVocabulary.trim()
+      if (prompt.length > 0) {
+        args.push('--prompt', prompt)
       }
     }
 
@@ -591,11 +592,12 @@ function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string,
 const HALLUCINATION_PATTERNS = [
   /^TT$/i, /^T{2,}$/i,
   /^thank you\.?$/i, /^thanks for watching\.?$/i,
-  /^subtitles by/i, /^subscribe/i,
-  /^\(music\)$/i, /^\(applause\)$/i, /^\(laughter\)$/i,
+  /^see you in the next/i, /^subtitles by/i, /^subscribe/i,
+  /^\(music\)$/i, /^\(applause\)$/i, /^\(laughter\)$/i, /^\[music\]$/i, /^\[applause\]$/i, /^\[blank_audio\]$/i,
   /^you$/i, /^\.+$/,
   /^bye\.?$/i, /^goodbye\.?$/i,
   /^please subscribe/i, /^like and subscribe/i,
+  /don't forget to subscribe/i, /hit the (bell|subscribe) button/i,
 ]
 
 function isHallucination(text: string): boolean {
@@ -623,7 +625,11 @@ function deduplicateRepetitions(text: string): string {
     result.push(sentence)
     lastSentence = sentence
   }
-  return result.join(' ')
+  let out = result.join(' ')
+  // Phrase repetition: same 10+ char phrase 3+ times
+  const phraseRepeat = /(.{10,}?)(\s+\1){2,}/g
+  out = out.replace(phraseRepeat, '$1')
+  return out
 }
 
 function cleanTranscriptText(text: string): string {

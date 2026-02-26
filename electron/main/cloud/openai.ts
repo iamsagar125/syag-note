@@ -43,17 +43,22 @@ export async function chatOpenAI(
   return response.choices[0]?.message?.content || ''
 }
 
-export async function sttOpenAI(wavBuffer: Buffer, apiKey: string): Promise<string> {
+export async function sttOpenAI(wavBuffer: Buffer, apiKey: string, prompt?: string): Promise<string> {
   const client = new OpenAI({ apiKey })
 
   const file = new File([wavBuffer], 'audio.wav', { type: 'audio/wav' })
 
-  const transcription = await client.audio.transcriptions.create({
+  const opts: Record<string, unknown> = {
     file,
     model: 'whisper-1',
     language: 'en',
     response_format: 'text',
-  })
+  }
+  if (prompt?.trim() && prompt.length <= 1000) {
+    opts.prompt = prompt.trim()
+  }
+
+  const transcription = await client.audio.transcriptions.create(opts as any)
 
   return transcription as unknown as string
 }

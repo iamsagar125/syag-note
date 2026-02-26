@@ -116,7 +116,7 @@ export async function chatGroq(
   return response.choices?.[0]?.message?.content || ''
 }
 
-export async function sttGroq(wavBuffer: Buffer, apiKey: string): Promise<string> {
+export async function sttGroq(wavBuffer: Buffer, apiKey: string, prompt?: string): Promise<string> {
   const boundary = `----FormBoundary${Date.now()}`
 
   const parts: Buffer[] = []
@@ -127,15 +127,19 @@ export async function sttGroq(wavBuffer: Buffer, apiKey: string): Promise<string
     `Content-Type: audio/wav\r\n\r\n`
   ))
   parts.push(wavBuffer)
-  parts.push(Buffer.from(
-    `\r\n--${boundary}\r\n` +
+  let extraFields = `\r\n--${boundary}\r\n` +
     `Content-Disposition: form-data; name="model"\r\n\r\n` +
     `whisper-large-v3-turbo\r\n` +
     `--${boundary}\r\n` +
     `Content-Disposition: form-data; name="language"\r\n\r\n` +
-    `en\r\n` +
-    `--${boundary}--\r\n`
-  ))
+    `en\r\n`
+  if (prompt?.trim() && prompt.length <= 1000) {
+    extraFields += `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="prompt"\r\n\r\n` +
+      `${prompt.trim()}\r\n`
+  }
+  extraFields += `--${boundary}--\r\n`
+  parts.push(Buffer.from(extraFields))
 
   const body = Buffer.concat(parts)
 
