@@ -112,6 +112,7 @@ EDGE CASES
 OUTPUT FORMAT (follow exactly)
 
 **[Meeting Title]** — [Date]
+(When Title is "Untitled", generate a short descriptive title (3–6 words) from the main topic. Never use "This meeting" or "Meeting Notes".)
 
 **TL;DR:** [One line. Max 15 words. What happened + most important outcome.]
 

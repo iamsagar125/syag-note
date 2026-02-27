@@ -117,13 +117,23 @@ export const TRAY_ICON_RECORDING_BASE64 = '${trayPng.toString('base64')}'
     fs.writeFileSync(path.join(previewDir, 'preview-tray-22.png'), trayPng)
     console.log('Wrote public/icon-previews/preview-tray-22.png')
   } else {
-    // Ensure electron/resources has the tray template for packaging (extraResources in electron-builder)
-    if (fs.existsSync(trayTemplate2xPng)) {
-      fs.mkdirSync(path.dirname(trayTemplateInResources), { recursive: true })
-      fs.copyFileSync(trayTemplate2xPng, trayTemplateInResources)
-      console.log('Copied public/tray-icon-template-2x.png → electron/resources/ for packaging')
+    // Ensure electron/resources has the tray icon for packaging (extraResources in electron-builder)
+    // Tray uses setTemplateImage(false) so icon shows as-is (black). Use black file or negate template (white→black)
+    const trayBlackPng = path.join(root, 'public', 'tray-icon-black-2x.png')
+    const trayOutPath = path.join(root, 'electron', 'resources', 'tray-icon-template-2x.png')
+    fs.mkdirSync(path.dirname(trayOutPath), { recursive: true })
+    if (fs.existsSync(trayBlackPng)) {
+      fs.copyFileSync(trayBlackPng, trayOutPath)
+      console.log('Using public/tray-icon-black-2x.png for tray')
+    } else if (fs.existsSync(trayTemplate2xPng)) {
+      const buf = await sharp(fs.readFileSync(trayTemplate2xPng)).negate({ alpha: false }).png().toBuffer()
+      fs.writeFileSync(trayOutPath, buf)
+      console.log('Created black tray icon from template (negated)')
+    } else if (fs.existsSync(trayTemplateInResources)) {
+      const buf = await sharp(fs.readFileSync(trayTemplateInResources)).negate({ alpha: false }).png().toBuffer()
+      fs.writeFileSync(trayOutPath, buf)
+      console.log('Created black tray icon from existing template')
     }
-    console.log('Tray: using file as-is (electron/resources/tray-icon-template-2x.png or public); skipping tray regeneration')
   }
 
   // ─── 2. In-app icon ─── use in-app-icon.png when present; strip black background only (design as-is, no black)

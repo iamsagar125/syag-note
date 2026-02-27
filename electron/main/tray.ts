@@ -35,7 +35,7 @@ function createTrayIcon(): Electron.NativeImage {
     image = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_BASE64}`)
   }
   if (process.platform === 'darwin') {
-    image.setTemplateImage(true)
+    image.setTemplateImage(false) // false = always black (no inversion for light/dark menu bar)
     image = image.resize({ width: 22, height: 22 })
   }
   return image
@@ -50,7 +50,7 @@ function createRecordingIcon(): Electron.NativeImage {
     image = nativeImage.createFromDataURL(`data:image/png;base64,${TRAY_ICON_RECORDING_BASE64}`)
   }
   if (process.platform === 'darwin') {
-    image.setTemplateImage(true)
+    image.setTemplateImage(false)
     image = image.resize({ width: 22, height: 22 })
   }
   return image

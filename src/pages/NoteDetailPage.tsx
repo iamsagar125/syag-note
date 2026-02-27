@@ -40,10 +40,13 @@ export default function NoteDetailPage() {
   const [meetingTemplate, setMeetingTemplate] = useState("general");
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lineTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const templateMenuRef = useRef<HTMLDivElement>(null);
   const displayElapsedRef = useRef(0);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const userHasEditedTitleRef = useRef(false);
 
   // Timer logic: use activeSession.elapsedSeconds when we have an active session for this note; otherwise local state
   const displayElapsed = activeSession?.noteId === id ? (activeSession.elapsedSeconds ?? 0) : elapsed;
@@ -126,6 +129,13 @@ export default function NoteDetailPage() {
 
   const note = notes.find((n) => n.id === id);
 
+  const handleTitleSave = useCallback((newTitle: string) => {
+    if (id && newTitle.trim() !== (note?.title || "").trim()) {
+      userHasEditedTitleRef.current = true;
+      updateNote(id, { title: newTitle.trim() || note?.title || "Meeting Notes" });
+    }
+  }, [id, note?.title, updateNote]);
+
   const handleRegenerate = useCallback(async () => {
     if (!id || !note || !api || !selectedAIModel) {
       toast.error("Select an AI model in Settings to regenerate the summary.");
@@ -147,10 +157,13 @@ export default function NoteDetailPage() {
         model: selectedAIModel,
         meetingTemplateId: meetingTemplate,
         customPrompt,
+        meetingTitle: note.title?.trim() || undefined,
       });
-      // Granola-style: update title from regenerated summary when we have a meaningful one
+      // Granola-style: update title from regenerated summary when we have a meaningful one (never overwrite user edits)
       const updates: { summary: typeof summary; title?: string } = { summary };
-      if (summary.title && summary.title !== note.title && summary.title !== "Meeting Notes") {
+      const genericTitles = ["meeting notes", "this meeting", "untitled", "untitled meeting"];
+      const isGeneric = (t: string) => genericTitles.includes((t || "").toLowerCase());
+      if (!userHasEditedTitleRef.current && summary.title && summary.title !== note.title && !isGeneric(summary.title)) {
         updates.title = summary.title;
       }
       updateNote(id, updates);
@@ -228,8 +241,37 @@ export default function NoteDetailPage() {
           <div className="flex flex-1 flex-col min-w-0">
             <div className="flex-1 overflow-y-auto pb-24">
               <div className="mx-auto max-w-3xl px-8 py-3">
-                {/* Title */}
-                <h1 className="mb-3 font-display text-2xl text-foreground leading-tight">{note.title}</h1>
+                {/* Title — editable */}
+                {isEditingTitle ? (
+                  <input
+                    ref={titleRef}
+                    defaultValue={note.title}
+                    onBlur={(e) => {
+                      handleTitleSave(e.target.value);
+                      setIsEditingTitle(false);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        handleTitleSave((e.target as HTMLInputElement).value);
+                        setIsEditingTitle(false);
+                      }
+                      if (e.key === "Escape") setIsEditingTitle(false);
+                    }}
+                    autoFocus
+                    className="mb-3 w-full font-display text-2xl text-foreground bg-transparent border-none outline-none focus:ring-0"
+                    placeholder="Meeting title"
+                  />
+                ) : (
+                  <h1
+                    onClick={() => setIsEditingTitle(true)}
+                    className={cn(
+                      "mb-3 font-display text-2xl cursor-text transition-colors leading-tight",
+                      (note.title || "").trim() ? "text-foreground hover:text-foreground/80" : "text-foreground/40 hover:text-foreground/60"
+                    )}
+                  >
+                    {note.title || "Meeting title"}
+                  </h1>
+                )}
 
                 {/* Meta chips — date, time, then My note / AI + template (only when summary exists and not regenerating) */}
                 <div className="flex items-center gap-2 mb-6 flex-wrap">

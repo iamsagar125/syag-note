@@ -23,6 +23,8 @@ Response format (standard AI assistant style, like ChatGPT, Claude, Granola):
 
 // ─── Summarize ──────────────────────────────────────────────────────────────
 
+const GENERIC_TITLES = ['this meeting', 'meeting notes', 'untitled', 'untitled meeting']
+
 /** Granola-style: extract meeting title from LLM response. Template format: **Title** — Date */
 function extractTitleFromResponse(response: string): string {
   const trimmed = response.trim()
@@ -30,13 +32,27 @@ function extractTitleFromResponse(response: string): string {
 
   // Primary: **Title** — Date or **Title** - Date
   const primary = trimmed.match(/^\*\*(.+?)\*\*\s*[—\-]/m)
-  if (primary?.[1]) return primary[1].trim()
+  if (primary?.[1]) {
+    const t = primary[1].trim()
+    if (t && !GENERIC_TITLES.includes(t.toLowerCase())) return t
+  }
 
   // Fallback: first **bold** on first non-empty line (skip TL;DR)
   const firstLine = trimmed.split('\n').find((l) => l.trim().length > 0) || ''
   if (!/^TL;DR/i.test(firstLine.trim())) {
     const bold = firstLine.match(/\*\*([^*]+)\*\*/)
-    if (bold?.[1] && bold[1].trim().length > 2) return bold[1].trim()
+    if (bold?.[1]) {
+      const t = bold[1].trim()
+      if (t.length > 2 && !GENERIC_TITLES.includes(t.toLowerCase())) return t
+    }
+  }
+
+  // Try to derive from TL;DR line (first 4–5 words, max 40 chars)
+  const tldr = trimmed.match(/\*\*TL;DR:\*\*\s*(.+?)(?:\n|$)/i)?.[1]?.trim()
+  if (tldr && tldr.length > 10) {
+    const words = tldr.split(/\s+/).slice(0, 5).join(' ')
+    const derived = words.length > 40 ? words.slice(0, 37) + '...' : words
+    if (derived) return derived
   }
 
   return 'Meeting Notes'
@@ -45,7 +61,7 @@ function extractTitleFromResponse(response: string): string {
 function buildMeetingContext(overrides?: Partial<MeetingContext>): MeetingContext {
   const dateStr = new Date().toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })
   return {
-    title: 'This meeting',
+    title: 'Untitled', // LLM should generate descriptive title from content; caller overrides when known
     date: dateStr,
     duration: null,
     attendees: [],
@@ -61,13 +77,16 @@ export async function summarize(
   personalNotes: string,
   model: string,
   meetingTemplateId?: string,
-  customPrompt?: string
+  customPrompt?: string,
+  meetingTitle?: string
 ): Promise<MeetingSummary> {
   const transcriptText = transcript.map(t => `[${t.time}] ${t.speaker}: ${t.text}`).join('\n')
 
   const templateId = meetingTemplateId || detectMeetingTypeFromContent(transcriptText, personalNotes)
   const template = getTemplate(templateId)
-  const context = buildMeetingContext()
+  const context = buildMeetingContext(
+    meetingTitle?.trim() ? { title: meetingTitle.trim() } : undefined
+  )
 
   const templatePrompt = customPrompt ? `${template.prompt}\n\n${customPrompt}` : template.prompt
   const effectiveTemplate = { ...template, prompt: templatePrompt }

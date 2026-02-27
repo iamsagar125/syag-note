@@ -266,6 +266,7 @@ export default function NewNotePage() {
             model: selectedAIModel,
             meetingTemplateId: templateId,
             customPrompt,
+            meetingTitle: (eventState?.eventTitle || useTitle || "").trim() || undefined,
           });
         } catch (err) {
           console.error('LLM summarization failed, using local fallback:', err);
@@ -286,11 +287,15 @@ export default function NewNotePage() {
       const startTimeMs = activeSession?.startTime ?? now.getTime() - elapsedSeconds * 1000;
       const timeRange = formatTimeRange(startTimeMs, elapsedSeconds);
 
+      const genericTitles = ["meeting notes", "this meeting", "untitled", "untitled meeting"];
+      const isGenericTitle = (t: string) => genericTitles.includes((t || "").toLowerCase());
+      const aiTitle = generatedSummary.title && !isGenericTitle(generatedSummary.title) ? generatedSummary.title : null;
+
       try {
-        // Granola-style: use user's title if they manually edited; otherwise use AI-generated
+        // Granola-style: use user's title if they manually edited; otherwise use AI-generated (never generic)
         const finalTitle = userHasEditedTitleRef.current
           ? useTitle || noteTitle
-          : (generatedSummary.title || noteTitle);
+          : (aiTitle || noteTitle);
         addNote({
           id: override?.noteId ?? noteId,
           title: finalTitle,
@@ -307,8 +312,8 @@ export default function NewNotePage() {
         console.error('Failed to save note:', err);
         toast.error("Note could not be saved. Check console.");
       }
-      // Granola-style: only auto-update title from summary if user hasn't manually edited it
-      if (!userHasEditedTitleRef.current && generatedSummary.title && generatedSummary.title !== noteTitle) {
+      // Granola-style: only auto-update title from summary if user hasn't manually edited and we got a real title
+      if (!userHasEditedTitleRef.current && generatedSummary.title && generatedSummary.title !== noteTitle && !isGenericTitle(generatedSummary.title)) {
         setTitle(generatedSummary.title);
       }
     } finally {
@@ -573,6 +578,7 @@ export default function NewNotePage() {
             model: selectedAIModel,
             meetingTemplateId: tid,
             customPrompt,
+            meetingTitle: (eventState?.eventTitle || title || "").trim() || undefined,
           });
           setSummary(newSummary);
         } catch {
