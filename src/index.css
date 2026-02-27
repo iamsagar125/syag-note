@@ -129,3 +129,7 @@
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   }
 }
+
+.prose h1, .prose h2, .prose h3, .prose h4 {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}

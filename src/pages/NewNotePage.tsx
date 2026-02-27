@@ -643,7 +643,7 @@ export default function NewNotePage() {
       : elapsed;
   const isStopped = recordingState === "stopped";
   const showSummaryPanel = (recordingState === "paused" || recordingState === "stopped") && (summary || isSummarizing);
-  const hasRealSummary = !!summary && !isPlaceholderSummary(summary) && !isSummarizing;
+  const hasRealSummary = !!summary && !isPlaceholderSummary(summary);
   const showSummaryControls = hasRealSummary;
 
   const folderChip = (
@@ -863,6 +863,10 @@ export default function NewNotePage() {
                               <button
                                 key={t.id}
                                 onClick={() => {
+                                  if (t.id === meetingTemplate) {
+                                    setShowTemplateMenu(false);
+                                    return;
+                                  }
                                   setMeetingTemplate(t.id);
                                   meetingTemplateRef.current = t.id;
                                   setShowTemplateMenu(false);

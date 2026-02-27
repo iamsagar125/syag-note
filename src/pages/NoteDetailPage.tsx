@@ -284,7 +284,7 @@ export default function NoteDetailPage() {
                     <Clock className="h-3 w-3" />
                     {note.timeRange ?? note.duration}
                   </span>
-                  {note.summary && !isSummarizing && (
+                  {note.summary && (
                     <>
                       <NotesViewToggle
                         viewMode={viewMode}
@@ -308,6 +308,10 @@ export default function NoteDetailPage() {
                               <button
                                 key={t.id}
                                 onClick={() => {
+                                  if (t.id === meetingTemplate) {
+                                    setShowTemplateMenu(false);
+                                    return;
+                                  }
                                   setMeetingTemplate(t.id);
                                   setShowTemplateMenu(false);
                                   handleRegenerate(t.id);
@@ -366,7 +370,7 @@ export default function NoteDetailPage() {
               <AskBar
                 context="meeting"
                 meetingTitle={note.title}
-                hideTranscriptToggle={!!note.summary && !isSummarizing}
+                hideTranscriptToggle={!!note.summary}
                 noteContext={[
                   `Title: ${note.title}`,
                   note.personalNotes ? `Personal Notes: ${note.personalNotes}` : '',

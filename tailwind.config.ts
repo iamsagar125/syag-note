@@ -97,6 +97,17 @@ export default {
         "fade-in": "fade-in 0.4s ease-out",
         "slide-in": "slide-in 0.3s ease-out",
       },
+      typography: {
+        DEFAULT: {
+          css: {
+            fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+            "h1, h2, h3, h4": {
+              fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+              fontWeight: "600",
+            },
+          },
+        },
+      },
     },
   },
   plugins: [require("tailwindcss-animate"), require("@tailwindcss/typography")],

@@ -150,7 +150,7 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
   const attendees = localSummary.attendees || [];
 
   return (
-    <div className="animate-fade-in space-y-4">
+    <div className="animate-fade-in space-y-4 font-body">
       {attendees.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <Users className="h-3 w-3 text-muted-foreground/40" />
