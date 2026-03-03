@@ -34,6 +34,7 @@ export default function AskSyag() {
   const [streamingText, setStreamingText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const streamingCompletedRef = useRef(false);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -45,6 +46,7 @@ export default function AskSyag() {
 
     const cleanup = api.llm.onChatChunk((chunk) => {
       if (chunk.done) {
+        streamingCompletedRef.current = true;
         setStreamingText((current) => {
           if (current) {
             setMessages((prev) => [...prev, { role: "assistant", text: current }]);
@@ -102,6 +104,7 @@ export default function AskSyag() {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
     setStreamingText("");
+    streamingCompletedRef.current = false;
 
     if (api && selectedAIModel) {
       try {
@@ -117,8 +120,8 @@ export default function AskSyag() {
           model: selectedAIModel,
         });
 
-        // If we got a direct response (non-streaming), add it
-        if (response && !streamingText) {
+        // Only add direct response if we did NOT receive streaming (avoid duplicate)
+        if (response && !streamingCompletedRef.current) {
           setMessages((prev) => [
             ...prev,
             { role: "assistant", text: response },
@@ -145,7 +148,7 @@ export default function AskSyag() {
         setIsLoading(false);
       }, 800);
     }
-  }, [input, messages, getActiveAIModelLabel, useTranscripts, api, selectedAIModel, buildNotesContext, streamingText]);
+  }, [input, messages, getActiveAIModelLabel, useTranscripts, api, selectedAIModel, buildNotesContext]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

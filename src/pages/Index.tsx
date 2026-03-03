@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { NoteCardMenu } from "@/components/NoteCardMenu";
-import { Plus, FolderOpen, ArrowLeft, FileText, Calendar, Link2 } from "lucide-react";
+import { Plus, FolderOpen, ArrowLeft, FileText, Calendar, Link2, List } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AskBar } from "@/components/AskBar";
 import { useFolders } from "@/contexts/FolderContext";
@@ -10,8 +10,9 @@ import { useRecording } from "@/contexts/RecordingContext";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { ICSDialog } from "@/components/ICSDialog";
 import { EventDetailSheet } from "@/components/EventDetailSheet";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CalendarEvent } from "@/lib/ics-parser";
-import { format, isToday as isTodayFn, isTomorrow, isAfter } from "date-fns";
+import { format, isToday as isTodayFn, isAfter } from "date-fns";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -24,7 +25,16 @@ const Index = () => {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
 
   const now = new Date();
-  const upcomingEvents = events.filter(e => isAfter(e.start, now)).slice(0, 5);
+  const upcomingEventsList = events
+    .filter((e) => isAfter(new Date(e.start), now))
+    .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
+    .slice(0, 15);
+  const upcomingByDate = upcomingEventsList.reduce<Record<string, CalendarEvent[]>>((acc, evt) => {
+    const key = format(new Date(evt.start), "yyyy-MM-dd");
+    (acc[key] = acc[key] || []).push(evt);
+    return acc;
+  }, {});
+  const upcomingDateKeys = Object.keys(upcomingByDate).sort();
 
   const activeFolderId = searchParams.get("folder");
   const activeFolder = activeFolderId ? folders.find((f) => f.id === activeFolderId) : null;
@@ -124,38 +134,76 @@ const Index = () => {
             <div className="mb-8">
               <div className="flex items-center justify-between mb-3">
                 <h2 className="font-display text-lg text-foreground">Coming up</h2>
-                {notes.length > 0 && (
-                  <button
-                    onClick={() => navigate("/new-note?startFresh=1", { state: { startFresh: true } })}
-                    className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
-                  >
-                    <Plus className="h-4 w-4" />
-                    Quick Note
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {icsSource && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => navigate("/calendar?view=list")}
+                          className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                        >
+                          <List className="h-4 w-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Calendar list view</TooltipContent>
+                    </Tooltip>
+                  )}
+                  {notes.length > 0 && (
+                    <button
+                      onClick={() => navigate("/new-note?startFresh=1", { state: { startFresh: true } })}
+                      className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground transition-all hover:opacity-90"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Quick Note
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {icsSource && upcomingEvents.length > 0 ? (
-                <div className="rounded-xl border border-border bg-card/50 divide-y divide-border">
-                  {upcomingEvents.map((evt) => {
-                    const dayLabel = isTodayFn(evt.start) ? "Today" : isTomorrow(evt.start) ? "Tomorrow" : format(evt.start, "EEE, MMM d");
+              {icsSource && upcomingDateKeys.length > 0 ? (
+                <div className="rounded-xl border border-border bg-card/50 overflow-hidden">
+                  {upcomingDateKeys.map((dateKey) => {
+                    const dayEvents = upcomingByDate[dateKey];
+                    const dateObj = new Date(dateKey + "T00:00:00");
+                    const dayIsToday = isTodayFn(dateObj);
                     return (
-                      <button
-                        key={evt.id}
-                        onClick={() => setSelectedEvent(evt)}
-                        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-secondary/50 transition-colors cursor-pointer"
-                      >
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent/10 text-accent flex-shrink-0">
-                          <Calendar className="h-4 w-4" />
+                      <div key={dateKey} className="border-b border-border last:border-b-0">
+                        <div className="px-4 pt-3 pb-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-2xl font-semibold text-foreground tabular-nums">
+                              {format(dateObj, "d")}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {format(dateObj, "MMMM EEE")}
+                              {dayIsToday && (
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent ml-1.5 align-middle" />
+                              )}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{evt.title}</p>
-                          <p className="text-[11px] text-muted-foreground">{dayLabel} · {format(evt.start, "h:mm a")}</p>
+                        <div className="border-l-2 border-border pl-3 ml-4 mb-3 space-y-0.5">
+                          {dayEvents.map((evt) => {
+                            const start = new Date(evt.start);
+                            const end = new Date(evt.end);
+                            const timeStr = evt.isAllDay
+                              ? "All day"
+                              : `${format(start, "h:mm a")}–${format(end, "h:mm a")}`;
+                            return (
+                              <button
+                                key={evt.id}
+                                onClick={() => setSelectedEvent(evt)}
+                                className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-secondary/50 transition-colors cursor-pointer rounded-r"
+                              >
+                                <p className="text-sm font-medium text-foreground truncate w-full">{evt.title}</p>
+                                <p className="text-[11px] text-muted-foreground">{timeStr}</p>
+                              </button>
+                            );
+                          })}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
-                  <div className="px-4 py-2">
+                  <div className="px-4 py-2 border-t border-border">
                     <button onClick={() => setIcsOpen(true)} className="text-[11px] text-muted-foreground hover:text-foreground transition-colors">
                       Re-sync calendar
                     </button>

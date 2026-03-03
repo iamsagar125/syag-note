@@ -126,6 +126,17 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
     setEditingField(null);
   };
 
+  const handleActionAssigneeChange = (rawIndex: number, value: string) => {
+    const items = [...(localSummary.actionItems || localSummary.nextSteps || [])];
+    if (items[rawIndex]) items[rawIndex] = { ...items[rawIndex], assignee: value.trim() || "Unassigned" };
+    const updated = localSummary.actionItems
+      ? { ...localSummary, actionItems: items as ActionItem[] }
+      : { ...localSummary, nextSteps: items };
+    setLocalSummary(updated);
+    onUpdate?.(updated);
+    setEditingField(null);
+  };
+
   const handleToggleActionDone = (rawIndex: number) => {
     const items = [...(localSummary.actionItems || localSummary.nextSteps || [])];
     items[rawIndex] = { ...items[rawIndex], done: !items[rawIndex].done };
@@ -389,12 +400,10 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
           <h3 className="text-[15px] font-semibold text-foreground mb-1.5">Action items</h3>
           <div className="space-y-1">
             {actionsWithIndices.map(({ item, rawIndex }, i) => {
-              const displayText = (() => {
-                const hasAssignee = item.assignee && !["You", "Unassigned", "[Unassigned]", "TBD", ""].includes(item.assignee.trim());
-                const base = hasAssignee ? `${item.assignee} - ${item.text}` : item.text;
-                const due = "dueDate" in item && item.dueDate ? ` (by ${item.dueDate})` : "";
-                return base + due;
-              })();
+              const assigneeDisplay = item.assignee && !["You", "Unassigned", "[Unassigned]", "TBD", ""].includes(item.assignee.trim())
+                ? item.assignee
+                : "Unassigned";
+              const dueStr = "dueDate" in item && item.dueDate ? ` (by ${item.dueDate})` : "";
               return (
                 <div key={i} className="flex items-start gap-1.5 text-[15px] font-medium leading-snug group/action">
                   <span className="flex-shrink-0 w-5 text-muted-foreground">{i + 1}.</span>
@@ -405,37 +414,69 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
                       <Circle className="h-3.5 w-3.5 text-foreground/20 hover:text-foreground/40 transition-colors" />
                     )}
                   </button>
-                  {editingField === `action-${i}` ? (
-                    <input
-                      autoFocus
-                      defaultValue={item.text}
-                      onBlur={(e) => {
-                        handleActionTextChange(rawIndex, e.target.value);
-                        setEditingField(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          handleActionTextChange(rawIndex, (e.target as HTMLInputElement).value);
+                  <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-1">
+                    {editingField === `action-assignee-${i}` ? (
+                      <input
+                        autoFocus
+                        defaultValue={item.assignee || ""}
+                        onBlur={(e) => {
+                          handleActionAssigneeChange(rawIndex, e.target.value);
                           setEditingField(null);
-                        }
-                        if (e.key === "Escape") setEditingField(null);
-                      }}
-                      className={cn(
-                        "flex-1 bg-transparent border-none outline-none focus:ring-0 min-w-0",
-                        item.done && "text-muted-foreground/60 line-through"
-                      )}
-                    />
-                  ) : (
-                    <span
-                      onClick={() => setEditingField(`action-${i}`)}
-                      className={cn(
-                        "cursor-text hover:bg-secondary/30 rounded px-1 -mx-1",
-                        item.done ? "text-muted-foreground/60 line-through" : "text-foreground/90"
-                      )}
-                    >
-                      {displayText}
-                    </span>
-                  )}
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            handleActionAssigneeChange(rawIndex, (e.target as HTMLInputElement).value);
+                            setEditingField(null);
+                          }
+                          if (e.key === "Escape") setEditingField(null);
+                        }}
+                        className="min-w-[6rem] w-24 text-xs bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-ring text-foreground"
+                        placeholder="Assignee"
+                      />
+                    ) : (
+                      <span
+                        onClick={() => setEditingField(`action-assignee-${i}`)}
+                        className="text-xs text-muted-foreground cursor-text hover:bg-secondary/30 rounded px-1 -mx-1 inline-flex items-center gap-0.5"
+                        title="Click to edit assignee"
+                      >
+                        {assigneeDisplay}
+                        <Pencil className="h-2.5 w-2.5 text-muted-foreground/0 group-hover/action:text-muted-foreground/50 transition-colors" />
+                      </span>
+                    )}
+                    <span className="text-muted-foreground/60">—</span>
+                    {editingField === `action-${i}` ? (
+                      <input
+                        autoFocus
+                        defaultValue={item.text}
+                        onBlur={(e) => {
+                          handleActionTextChange(rawIndex, e.target.value);
+                          setEditingField(null);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            handleActionTextChange(rawIndex, (e.target as HTMLInputElement).value);
+                            setEditingField(null);
+                          }
+                          if (e.key === "Escape") setEditingField(null);
+                        }}
+                        className={cn(
+                          "flex-1 min-w-0 bg-transparent border-none outline-none focus:ring-0",
+                          item.done && "text-muted-foreground/60 line-through"
+                        )}
+                      />
+                    ) : (
+                      <span
+                        onClick={() => setEditingField(`action-${i}`)}
+                        className={cn(
+                          "cursor-text hover:bg-secondary/30 rounded px-1 -mx-1",
+                          item.done ? "text-muted-foreground/60 line-through" : "text-foreground/90"
+                        )}
+                      >
+                        {item.text}
+                      </span>
+                    )}
+                    {dueStr && <span className="text-muted-foreground/70">{dueStr}</span>}
+                  </div>
                 </div>
               );
             })}

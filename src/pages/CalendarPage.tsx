@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Calendar, Link2, LayoutGrid, List, MapPin, Clock } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
@@ -6,7 +6,7 @@ import { useCalendar } from "@/contexts/CalendarContext";
 import { ICSDialog } from "@/components/ICSDialog";
 import { CalendarEvent } from "@/lib/ics-parser";
 import { format, isToday as isTodayFn, startOfDay } from "date-fns";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -44,13 +44,20 @@ function getSyncLabel(urlOrSource: string): string {
 
 export default function CalendarPage() {
   const today = new Date();
+  const [searchParams] = useSearchParams();
+  const initialView = searchParams.get("view") === "list" ? "list" : "grid";
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [icsOpen, setIcsOpen] = useState(false);
   const navigate = useNavigate();
-  const [view, setView] = useState<"grid" | "list">("grid");
+  const [view, setView] = useState<"grid" | "list">(initialView);
   const listViewScrollRef = useRef<HTMLDivElement>(null);
   const { events, icsSource, clearCalendar } = useCalendar();
+
+  useEffect(() => {
+    const urlView = searchParams.get("view") === "list" ? "list" : "grid";
+    setView(urlView);
+  }, [searchParams]);
 
   const daysInMonth = getDaysInMonth(year, month);
   const startOffset = getStartDayOffset(year, month);
