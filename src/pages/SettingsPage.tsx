@@ -5,10 +5,13 @@ import {
   Search
 } from "lucide-react";
 import { toast } from "sonner";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useModelSettings, localModels, enterpriseProviders } from "@/contexts/ModelSettingsContext";
+import { useCalendar } from "@/contexts/CalendarContext";
+import { ICSDialog, type CalendarProviderId } from "@/components/ICSDialog";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
@@ -96,6 +99,15 @@ function SectionHeader({ title, description }: { title: string; description?: st
 
 const ACCOUNT_LS_KEY = "syag-account";
 const PREFS_LS_KEY = "syag-preferences";
+const CALENDAR_PROVIDER_KEY = "syag_calendar_provider";
+
+function getStoredCalendarProvider(): CalendarProviderId | null {
+  try {
+    const v = localStorage.getItem(CALENDAR_PROVIDER_KEY);
+    if (v === "google" || v === "outlook" || v === "apple") return v;
+  } catch {}
+  return null;
+}
 
 interface Preferences {
   showRecordingIndicator: boolean;
@@ -349,6 +361,11 @@ function TemplatesSection() {
 
 export default function SettingsPage() {
   const modelSettings = useModelSettings();
+  const { icsSource, clearCalendar } = useCalendar();
+  const [calendarProvider, setCalendarProvider] = useState<CalendarProviderId | null>(getStoredCalendarProvider);
+  const [icsDialogOpen, setIcsDialogOpen] = useState(false);
+  const [icsDialogProvider, setIcsDialogProvider] = useState<CalendarProviderId | null>(null);
+  const { sidebarOpen } = useSidebarVisibility();
   const {
     selectedAIModel, setSelectedAIModel,
     selectedSTTModel, setSelectedSTTModel,
@@ -550,9 +567,14 @@ export default function SettingsPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-
-      <main className="flex-1 overflow-y-auto">
+      {sidebarOpen ? (
+        <div className="w-56 flex-shrink-0 overflow-hidden">
+          <Sidebar />
+        </div>
+      ) : (
+        <SidebarExpandTrigger />
+      )}
+      <main className={cn("flex-1 overflow-y-auto", !sidebarOpen && isElectron && "pl-20")}>
         <div className="mx-auto max-w-3xl px-6 pt-4 pb-12">
           <h1 className="font-display text-2xl text-foreground mb-6">Settings</h1>
 
@@ -984,22 +1006,56 @@ export default function SettingsPage() {
                   </SettingRow>
                   <div className="space-y-2">
                     <h3 className="text-[13px] font-medium text-foreground">Connected Calendars</h3>
-                    {[
-                      { name: "Google Calendar", desc: "Sync with Google Calendar", connected: false },
-                      { name: "Outlook Calendar", desc: "Sync with Microsoft Outlook", connected: false },
-                      { name: "Apple Calendar", desc: "Sync with iCloud Calendar", connected: false },
-                    ].map((cal) => (
-                      <div key={cal.name} className="flex items-center justify-between rounded-md border border-border bg-card p-3">
-                        <div>
-                          <span className="text-[13px] font-medium text-foreground">{cal.name}</span>
-                          <p className="text-[11px] text-muted-foreground">{cal.desc}</p>
+                    {(
+                      [
+                        { id: "google" as CalendarProviderId, name: "Google Calendar", desc: "Sync with Google Calendar" },
+                        { id: "outlook" as CalendarProviderId, name: "Outlook Calendar", desc: "Sync with Microsoft Outlook" },
+                        { id: "apple" as CalendarProviderId, name: "Apple Calendar", desc: "Sync with iCloud Calendar" },
+                      ] as const
+                    ).map((cal) => {
+                      const connected = !!icsSource && calendarProvider === cal.id;
+                      return (
+                        <div key={cal.name} className="flex items-center justify-between rounded-md border border-border bg-card p-3">
+                          <div>
+                            <span className="text-[13px] font-medium text-foreground">{cal.name}</span>
+                            <p className="text-[11px] text-muted-foreground">{cal.desc}</p>
+                          </div>
+                          {connected ? (
+                            <button
+                              onClick={() => {
+                                clearCalendar();
+                                setCalendarProvider(null);
+                                try { localStorage.removeItem(CALENDAR_PROVIDER_KEY); } catch {}
+                              }}
+                              className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10 transition-colors"
+                            >
+                              Disconnect
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setIcsDialogProvider(cal.id);
+                                setIcsDialogOpen(true);
+                              }}
+                              className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                            >
+                              Connect
+                            </button>
+                          )}
                         </div>
-                        <button className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors">
-                          Connect
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                  <ICSDialog
+                    open={icsDialogOpen}
+                    onOpenChange={setIcsDialogOpen}
+                    provider={icsDialogProvider ?? undefined}
+                    onSuccess={(p) => {
+                      setCalendarProvider(p);
+                      localStorage.setItem(CALENDAR_PROVIDER_KEY, p);
+                      setIcsDialogProvider(null);
+                    }}
+                  />
                 </div>
               )}
 

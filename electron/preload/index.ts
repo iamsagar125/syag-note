@@ -77,8 +77,16 @@ const electronAPI = {
   },
 
   llm: {
-    summarize: (data: { transcript: any[]; personalNotes: string; model: string; meetingTemplateId?: string }) =>
-      ipcRenderer.invoke('llm:summarize', data),
+    summarize: (data: {
+      transcript: any[]
+      personalNotes: string
+      model: string
+      meetingTemplateId?: string
+      customPrompt?: string
+      meetingTitle?: string
+      meetingDuration?: string | null
+      attendees?: string[]
+    }) => ipcRenderer.invoke('llm:summarize', data),
     chat: (data: { messages: any[]; context: any; model: string }) =>
       ipcRenderer.invoke('llm:chat', data),
     onChatChunk: (callback: (chunk: { text: string; done: boolean }) => void) => {

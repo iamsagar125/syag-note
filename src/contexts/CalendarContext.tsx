@@ -8,7 +8,7 @@ interface CalendarContextValue {
   error: string | null;
   lastRefresh: Date | null;
   importFromFile: (content: string, name?: string) => void;
-  importFromUrl: (url: string) => Promise<void>;
+  importFromUrl: (url: string) => Promise<boolean>;
   clearCalendar: () => void;
 }
 
@@ -108,11 +108,12 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
     }
   }, [persist]);
 
-  const importFromUrl = useCallback(async (url: string) => {
+  const importFromUrl = useCallback(async (url: string): Promise<boolean> => {
     setIsLoading(true);
     setError(null);
-    await fetchAndParse(url);
+    const ok = await fetchAndParse(url);
     setIsLoading(false);
+    return ok;
   }, [fetchAndParse]);
 
   const clearCalendar = useCallback(() => {

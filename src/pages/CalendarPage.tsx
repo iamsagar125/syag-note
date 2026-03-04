@@ -1,8 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Calendar, Link2, LayoutGrid, List, MapPin, Clock } from "lucide-react";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "@/contexts/CalendarContext";
+import { useNotes } from "@/contexts/NotesContext";
+import { useRecording } from "@/contexts/RecordingContext";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
+import { isElectron } from "@/lib/electron-api";
 import { ICSDialog } from "@/components/ICSDialog";
 import { CalendarEvent } from "@/lib/ics-parser";
 import { format, isToday as isTodayFn, startOfDay } from "date-fns";
@@ -52,7 +56,32 @@ export default function CalendarPage() {
   const navigate = useNavigate();
   const [view, setView] = useState<"grid" | "list">(initialView);
   const listViewScrollRef = useRef<HTMLDivElement>(null);
+  const { sidebarOpen } = useSidebarVisibility();
   const { events, icsSource, clearCalendar } = useCalendar();
+  const { notes } = useNotes();
+  const { activeSession } = useRecording();
+
+  const findNoteForEvent = (evt: CalendarEvent) => {
+    const eventDate = format(new Date(evt.start), "MMM d, yyyy");
+    return notes.find(
+      (n) =>
+        n.calendarEventId === evt.id ||
+        (n.title === evt.title && n.date === eventDate)
+    ) ?? null;
+  };
+
+  const handleEventClick = (evt: CalendarEvent) => {
+    const note = findNoteForEvent(evt);
+    if (note) {
+      if (activeSession?.noteId === note.id) {
+        navigate(`/new-note?session=${note.id}`);
+      } else {
+        navigate(`/note/${note.id}`);
+      }
+      return;
+    }
+    navigate("/new-note", { state: { eventTitle: evt.title, eventId: evt.id } });
+  };
 
   useEffect(() => {
     const urlView = searchParams.get("view") === "list" ? "list" : "grid";
@@ -119,8 +148,14 @@ export default function CalendarPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto">
+      {sidebarOpen ? (
+        <div className="w-56 flex-shrink-0 overflow-hidden">
+          <Sidebar />
+        </div>
+      ) : (
+        <SidebarExpandTrigger />
+      )}
+      <main className={cn("flex-1 overflow-y-auto", !sidebarOpen && isElectron && "pl-20")}>
         <div className="mx-auto max-w-4xl px-6 pt-4 pb-8 font-body">
           {/* Connect prompt */}
           {!icsSource ? (
@@ -216,7 +251,7 @@ export default function CalendarPage() {
                         {dayEvents.slice(0, 3).map((evt) => (
                           <button
                             key={evt.id}
-                            onClick={() => navigate("/new-note", { state: { eventTitle: evt.title, eventId: evt.id } })}
+                            onClick={() => handleEventClick(evt)}
                             className="w-full text-left truncate rounded px-1 py-0.5 text-[10px] bg-accent/10 text-accent font-medium hover:bg-accent/20 transition-colors cursor-pointer"
                           >
                             {format(new Date(evt.start), "h:mm")} {evt.title}
@@ -281,7 +316,7 @@ export default function CalendarPage() {
                           {dayEvents.map((evt) => (
                             <button
                               key={evt.id}
-                              onClick={() => navigate("/new-note", { state: { eventTitle: evt.title, eventId: evt.id } })}
+                              onClick={() => handleEventClick(evt)}
                               className="w-full text-left rounded-lg border border-border bg-card p-3 hover:border-accent/40 hover:shadow-sm transition-all group"
                             >
                               <div className="flex items-start justify-between gap-2">

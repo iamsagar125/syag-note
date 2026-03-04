@@ -5,17 +5,54 @@ import { Input } from "@/components/ui/input";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { Upload, Link2, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 
+export type CalendarProviderId = "google" | "outlook" | "apple";
+
+const PROVIDER_COPY: Record<CalendarProviderId, { title: string; description: string; urlHint: string }> = {
+  google: {
+    title: "Connect Google Calendar",
+    description: "Upload an .ics file or paste your private ICS feed URL from Google Calendar to sync events.",
+    urlHint: "Google Calendar → Settings → Calendar → Secret address in iCal format",
+  },
+  outlook: {
+    title: "Connect Outlook Calendar",
+    description: "Upload an .ics file or paste your Outlook calendar feed URL to sync events.",
+    urlHint: "Outlook: Calendar → Share → Publish calendar, or export .ics",
+  },
+  apple: {
+    title: "Connect Apple Calendar",
+    description: "Upload an .ics file exported from Apple Calendar (iCloud) or paste a subscribed calendar URL.",
+    urlHint: "Apple Calendar: File → Export, or use a subscribed calendar URL",
+  },
+};
+
+const DEFAULT_COPY = {
+  title: "Import Calendar",
+  description: "Upload an .ics file or paste an ICS feed URL from Google Calendar, Outlook, or Apple Calendar.",
+  urlHint: "Find your ICS URL in Google Calendar → Settings → Calendar → Secret address in iCal format",
+};
+
 interface ICSDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** When set, dialog shows provider-specific title/description and calls onSuccess with this provider on import success */
+  provider?: CalendarProviderId;
+  onSuccess?: (provider: CalendarProviderId) => void;
 }
 
-export function ICSDialog({ open, onOpenChange }: ICSDialogProps) {
+export function ICSDialog({ open, onOpenChange, provider, onSuccess }: ICSDialogProps) {
   const { importFromFile, importFromUrl, isLoading, error } = useCalendar();
   const [tab, setTab] = useState<"file" | "url">("file");
   const [url, setUrl] = useState("");
   const [success, setSuccess] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const copy = provider ? PROVIDER_COPY[provider] : DEFAULT_COPY;
+
+  const finishSuccess = (p?: CalendarProviderId) => {
+    setSuccess(true);
+    if (p) onSuccess?.(p);
+    setTimeout(() => { setSuccess(false); onOpenChange(false); }, 1200);
+  };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -23,27 +60,23 @@ export function ICSDialog({ open, onOpenChange }: ICSDialogProps) {
     const reader = new FileReader();
     reader.onload = () => {
       importFromFile(reader.result as string, file.name);
-      setSuccess(true);
-      setTimeout(() => { setSuccess(false); onOpenChange(false); }, 1200);
+      finishSuccess(provider);
     };
     reader.readAsText(file);
   };
 
   const handleUrl = async () => {
     if (!url.trim()) return;
-    await importFromUrl(url.trim());
-    if (!error) {
-      setSuccess(true);
-      setTimeout(() => { setSuccess(false); onOpenChange(false); }, 1200);
-    }
+    const ok = await importFromUrl(url.trim());
+    if (ok) finishSuccess(provider);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="font-display">Import Calendar</DialogTitle>
-          <DialogDescription>Upload an .ics file or paste an ICS feed URL from Google Calendar, Outlook, or Apple Calendar.</DialogDescription>
+          <DialogTitle className="font-display">{copy.title}</DialogTitle>
+          <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
 
         {/* Tabs */}
@@ -87,7 +120,7 @@ export function ICSDialog({ open, onOpenChange }: ICSDialogProps) {
                 className="text-sm"
               />
               <p className="text-[11px] text-muted-foreground">
-                Find your ICS URL in Google Calendar → Settings → Calendar → Secret address in iCal format
+                {copy.urlHint}
               </p>
               <Button onClick={handleUrl} disabled={isLoading || !url.trim()} className="w-full" size="sm">
                 {isLoading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Fetching...</> : "Import Calendar"}

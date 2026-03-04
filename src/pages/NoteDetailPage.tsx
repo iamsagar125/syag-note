@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { AskBar } from "@/components/AskBar";
 import { EditableSummary } from "@/components/EditableSummary";
 import { NotesViewToggle } from "@/components/NotesViewToggle";
@@ -30,7 +31,7 @@ export default function NoteDetailPage() {
   const { activeSession, resumeSession, updateSession, clearSession } = useRecording();
   const { selectedAIModel } = useModelSettings();
   const api = getElectronAPI();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { sidebarOpen, toggleSidebar } = useSidebarVisibility();
   const [viewMode, setViewMode] = useState<"my-notes" | "ai-notes">("ai-notes");
   const [transcriptVisible, setTranscriptVisible] = useState(false);
   const [transcriptSearch, setTranscriptSearch] = useState("");
@@ -159,6 +160,7 @@ export default function NoteDetailPage() {
         meetingTemplateId: effectiveTemplateId,
         customPrompt,
         meetingTitle: note.title?.trim() || undefined,
+        meetingDuration: note.duration || undefined,
       });
       // Granola-style: update title from regenerated summary when we have a meaningful one (never overwrite user edits)
       const updates: { summary: typeof summary; title?: string } = { summary };
@@ -202,12 +204,13 @@ export default function NoteDetailPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className={cn(
-        "transition-all duration-300 ease-in-out overflow-hidden flex-shrink-0",
-        sidebarOpen ? "w-56" : "w-0"
-      )}>
-        <Sidebar />
-      </div>
+      {sidebarOpen ? (
+        <div className="w-56 flex-shrink-0 overflow-hidden">
+          <Sidebar />
+        </div>
+      ) : (
+        <SidebarExpandTrigger />
+      )}
       <main className="flex flex-1 flex-col min-w-0">
         <div className={cn(
           "flex items-center justify-between px-4 pt-3 pb-0",
@@ -215,7 +218,7 @@ export default function NoteDetailPage() {
         )}>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={toggleSidebar}
               className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
               {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}

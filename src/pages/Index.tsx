@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
+import { isElectron } from "@/lib/electron-api";
 import { NoteCardMenu } from "@/components/NoteCardMenu";
 import { Plus, FolderOpen, ArrowLeft, FileText, Calendar, Link2, List } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -17,6 +19,7 @@ import { format, parse, isToday as isTodayFn, isAfter, isValid } from "date-fns"
 const Index = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { sidebarOpen } = useSidebarVisibility();
   const { folders } = useFolders();
   const { notes, deleteNote, updateNoteFolder } = useNotes();
   const { activeSession } = useRecording();
@@ -25,8 +28,9 @@ const Index = () => {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
 
   const now = new Date();
+  // Show events until their end time (e.g. 1pm–1:30pm stays in Coming up until 1:30pm)
   const upcomingEventsList = events
-    .filter((e) => isAfter(new Date(e.start), now))
+    .filter((e) => isAfter(new Date(e.end), now))
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
     .slice(0, 5);
   const upcomingByDate = upcomingEventsList.reduce<Record<string, CalendarEvent[]>>((acc, evt) => {
@@ -56,12 +60,45 @@ const Index = () => {
     }).join('\n\n');
   }, [notes]);
 
+  /** Find an existing note for a calendar event (by calendarEventId or title + date). */
+  const findNoteForEvent = useCallback((evt: CalendarEvent) => {
+    const eventDate = format(new Date(evt.start), "MMM d, yyyy");
+    return notes.find(
+      (n) =>
+        n.calendarEventId === evt.id ||
+        (n.title === evt.title && n.date === eventDate)
+    ) ?? null;
+  }, [notes]);
+
+  /** Open existing note (summary or recording) or go to new-note to start. */
+  const handleStartNotesForEvent = useCallback((evt: CalendarEvent) => {
+    const note = findNoteForEvent(evt);
+    if (note) {
+      const isRecording = activeSession?.noteId === note.id;
+      if (isRecording) {
+        navigate(`/new-note?session=${note.id}`);
+      } else {
+        navigate(`/note/${note.id}`);
+      }
+      setSelectedEvent(null);
+      return;
+    }
+    navigate("/new-note", { state: { eventTitle: evt.title, eventId: evt.id } });
+    setSelectedEvent(null);
+  }, [findNoteForEvent, activeSession?.noteId, navigate]);
+
   // Folder view
   if (activeFolder) {
     return (
       <div className="flex h-screen overflow-hidden bg-background">
-        <Sidebar />
-        <main className="flex flex-1 flex-col min-w-0 relative">
+        {sidebarOpen ? (
+          <div className="w-56 flex-shrink-0 overflow-hidden">
+            <Sidebar />
+          </div>
+        ) : (
+          <SidebarExpandTrigger />
+        )}
+        <main className={cn("flex flex-1 flex-col min-w-0 relative", !sidebarOpen && isElectron && "pl-20")}>
           <div className="flex-1 overflow-y-auto pb-24">
             <div className="mx-auto max-w-2xl px-6 py-8 font-body">
               <div className="flex items-center gap-3 mb-6">
@@ -126,8 +163,14 @@ const Index = () => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      <main className="flex flex-1 flex-col min-w-0 relative">
+      {sidebarOpen ? (
+        <div className="w-56 flex-shrink-0 overflow-hidden">
+          <Sidebar />
+        </div>
+      ) : (
+        <SidebarExpandTrigger />
+      )}
+      <main className={cn("flex flex-1 flex-col min-w-0 relative", !sidebarOpen && isElectron && "pl-20")}>
         <div className="flex-1 overflow-y-auto pb-24">
           <div className="mx-auto max-w-2xl px-6 py-8 font-body">
             {/* Coming up section — no Re-sync calendar link here; resync is only on Calendar page */}
@@ -294,7 +337,13 @@ const Index = () => {
         </div>
       </main>
       <ICSDialog open={icsOpen} onOpenChange={setIcsOpen} />
-      <EventDetailSheet event={selectedEvent} open={!!selectedEvent} onOpenChange={(open) => !open && setSelectedEvent(null)} />
+      <EventDetailSheet
+        event={selectedEvent}
+        open={!!selectedEvent}
+        onOpenChange={(open) => !open && setSelectedEvent(null)}
+        onStartNotes={handleStartNotesForEvent}
+        existingNote={selectedEvent ? findNoteForEvent(selectedEvent) : null}
+      />
     </div>
   );
 };

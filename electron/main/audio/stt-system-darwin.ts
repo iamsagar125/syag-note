@@ -23,6 +23,12 @@ function getHelperScriptPath(): string | null {
   // Dev: from project root, electron/resources/darwin/
   const dev = join(app.getAppPath(), 'electron', 'resources', 'darwin', SCRIPT_NAME)
   if (existsSync(dev)) return dev
+  // Dev: main process runs from out/main/, repo root is ../..
+  const fromMain = join(__dirname, '..', '..', 'electron', 'resources', 'darwin', SCRIPT_NAME)
+  if (existsSync(fromMain)) return fromMain
+  // Dev: process cwd is project root (e.g. npm run dev)
+  const fromCwd = join(process.cwd(), 'electron', 'resources', 'darwin', SCRIPT_NAME)
+  if (existsSync(fromCwd)) return fromCwd
   return null
 }
 
@@ -30,7 +36,7 @@ export async function sttSystemDarwin(wavBuffer: Buffer): Promise<string> {
   const scriptPath = getHelperScriptPath()
   if (!scriptPath) {
     throw new Error(
-      'Apple Speech helper not found. On macOS the app bundle should include electron/resources/darwin/syag-speech-helper.swift.'
+      'Apple Speech helper not found. On macOS the app bundle should include electron/resources/darwin/syag-speech-helper.swift. Grant Speech Recognition in System Settings > Privacy & Security, or try another STT model. If running in development, run the app from the project root and ensure electron/resources/darwin/syag-speech-helper.swift exists.'
     )
   }
 

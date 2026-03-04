@@ -34,6 +34,12 @@ interface RecordingContextType {
   /** Set when capture failed (e.g. no mic, worklet load failed). Clear on retry or when user dismisses. */
   captureError: string | null;
   clearCaptureError: () => void;
+  /** STT pipeline state: idle, processing (VAD+STT running), or error (last chunk failed). */
+  sttStatus: 'idle' | 'processing' | 'error';
+  /** Last error message from STT (when sttStatus === 'error'). */
+  sttErrorMessage: string | null;
+  /** Timestamp of last successful transcript chunk (for stale hint). */
+  lastSuccessfulTranscriptTime: number | null;
   startAudioCapture: (sttModel: string, options?: { meetingTitle?: string; vocabulary?: string[] }) => Promise<void>;
   stopAudioCapture: () => Promise<void>;
   pauseAudioCapture: () => Promise<void>;
@@ -51,6 +57,9 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const [isCapturing, setIsCapturing] = useState(false);
   const [usingWebSpeech, setUsingWebSpeech] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
+  const [sttStatus, setSttStatus] = useState<'idle' | 'processing' | 'error'>('idle');
+  const [sttErrorMessage, setSttErrorMessage] = useState<string | null>(null);
+  const [lastSuccessfulTranscriptTime, setLastSuccessfulTranscriptTime] = useState<number | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -74,6 +83,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       if (chunk.text.startsWith("[STT Error:")) {
         const message = chunk.text.replace(/^\[STT Error:\s*/i, "").replace(/\]$/, "").trim() || "Transcription failed.";
         toast.error(message, { duration: 6000 });
+      } else {
+        setLastSuccessfulTranscriptTime(Date.now());
       }
       setTranscriptLines((prev) => [...prev, chunk]);
     });
@@ -85,6 +96,12 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         setActiveSession(prev => prev ? { ...prev, isRecording: false } : null);
       } else if (status.state === 'auto-resumed') {
         setActiveSession(prev => prev ? { ...prev, isRecording: true } : null);
+      } else if (status.state === 'stt-processing') {
+        setSttStatus('processing');
+        setSttErrorMessage(null);
+      } else if (status.state === 'stt-idle') {
+        setSttStatus(status.error ? 'error' : 'idle');
+        setSttErrorMessage(status.error ?? null);
       }
     });
 
@@ -229,6 +246,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const startAudioCapture = useCallback(async (sttModel: string, options?: { meetingTitle?: string; vocabulary?: string[] }) => {
     if (!api) return;
     setCaptureError(null);
+    setSttStatus('idle');
+    setSttErrorMessage(null);
 
     // Read the user-selected audio device from DB
     let preferredDeviceId: string | undefined;
@@ -404,6 +423,8 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     if (api) {
       await api.recording.stop();
     }
+    setSttStatus('idle');
+    setSttErrorMessage(null);
   }, [api, stopSpeechRecognition]);
 
   const isActive = !!activeSession;
@@ -412,6 +433,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     <RecordingContext.Provider value={{
       activeSession, isActive, startSession, resumeSession, updateSession, clearSession,
       transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, usingWebSpeech, captureError, clearCaptureError,
+      sttStatus, sttErrorMessage, lastSuccessfulTranscriptTime,
       startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture,
       setSessionScratch, getSessionScratch
     }}>

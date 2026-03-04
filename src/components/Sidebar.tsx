@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { FileText, Search, Settings, Sparkles, FolderOpen, Users, Briefcase, Star, Archive, Plus, X, Check, Home, Trash2 } from "lucide-react";
+import { FileText, Search, Settings, Sparkles, FolderOpen, Users, Briefcase, Star, Archive, Plus, X, Check, Home, Trash2, PanelLeftClose, PanelLeft } from "lucide-react";
 import { SyagLogo } from "@/components/SyagLogo";
 import { cn } from "@/lib/utils";
 import { isElectron } from "@/lib/electron-api";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useFolders } from "@/contexts/FolderContext";
 import { useSearchCommand } from "@/components/SearchCommand";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 
 const iconMap = {
   folder: FolderOpen,
@@ -18,6 +19,7 @@ const iconMap = {
 export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { sidebarOpen, setSidebarOpen } = useSidebarVisibility();
   const { folders, createFolder, deleteFolder } = useFolders();
   const { open: openSearch } = useSearchCommand();
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -36,9 +38,17 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-screen w-56 flex-shrink-0 flex-col bg-sidebar">
-      {/* Logo */}
-      <div className={cn("flex items-center gap-2 px-4 pb-2", isElectron ? "pt-10" : "pt-4")}>
+      {/* Logo + collapse */}
+      <div className={cn("flex items-center justify-between gap-2 px-4 pb-2", isElectron ? "pt-10" : "pt-4")}>
         <SyagLogo size={24} showText />
+        <button
+          onClick={() => setSidebarOpen(false)}
+          className="rounded p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          title="Hide sidebar"
+          aria-label="Hide sidebar"
+        >
+          <PanelLeftClose className="h-4 w-4" />
+        </button>
       </div>
 
       {/* Search */}
@@ -195,5 +205,23 @@ export function Sidebar() {
 
       <div className="h-2" />
     </aside>
+  );
+}
+
+/** Renders a slim trigger to show the sidebar when it is hidden. Use in page layout when sidebar is closed. */
+export function SidebarExpandTrigger() {
+  const { setSidebarOpen } = useSidebarVisibility();
+  return (
+    <button
+      onClick={() => setSidebarOpen(true)}
+      className={cn(
+        "fixed left-0 top-0 z-20 flex h-12 w-10 items-center justify-center rounded-r-md border border-l-0 border-border bg-sidebar text-sidebar-foreground shadow-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+        isElectron && "top-10"
+      )}
+      title="Show sidebar"
+      aria-label="Show sidebar"
+    >
+      <PanelLeft className="h-4 w-4" />
+    </button>
   );
 }

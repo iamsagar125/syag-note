@@ -23,12 +23,12 @@ let autoPaused = false
 let consecutiveSilentChunks = 0
 let hasLoggedNoSTTModelThisSession = false
 
-// Near real-time (Granola-style): process every 4s when active, 15s when idle
-const CHUNK_INTERVAL_ACTIVE_MS = 4000
+// Near real-time: process every 2.5s when active, 15s when idle; 1s minimum buffer for faster first result
+const CHUNK_INTERVAL_ACTIVE_MS = 2500
 const CHUNK_INTERVAL_IDLE_MS = 15000
 const SAMPLE_RATE = 16000
 // Auto-pause on silence disabled — user manually pauses and uses "Generate summary" button
-const MIN_SAMPLES_PER_CHANNEL = 16000 * 2 // 2s minimum for STT (near real-time, APIs support short audio)
+const MIN_SAMPLES_PER_CHANNEL = 16000 * 1 // 1s minimum for STT (faster first result; APIs support short audio)
 // Diarization is channel-based: channel 0 = mic (You), channel 1 = system audio (Others).
 // When you're muted, mic may still send silence/comfort noise; we use stricter gates for "You" to avoid false labels.
 const SPEAKER_BY_CHANNEL = ['You', 'Others'] as const
@@ -57,15 +57,18 @@ let meetingContextVocabulary: string[] = []
 let meetingTitleForPrompt = ''
 let sttVocabularyTerms: string[] = []
 
-/** Build natural-sentence prompt for Whisper (proper nouns, domain terms). Max ~224 tokens. */
+/** Build natural-sentence prompt for Whisper (proper nouns, domain terms). Max ~224 tokens (~800 chars). */
+const WHISPER_PROMPT_MAX_CHARS = 800
+
 function buildWhisperPrompt(title: string, vocabulary: string[]): string {
   const parts: string[] = []
   if (title?.trim()) parts.push(`${title.trim()} meeting.`)
   if (vocabulary.length > 0) {
-    const terms = vocabulary.slice(0, 40).join(', ')
+    const terms = vocabulary.slice(0, 35).join(', ')
     parts.push(`Discussion about ${terms}.`)
   }
-  return parts.join(' ') || 'Meeting transcription.'
+  const raw = parts.join(' ') || 'Meeting transcription.'
+  return raw.length <= WHISPER_PROMPT_MAX_CHARS ? raw : raw.slice(0, WHISPER_PROMPT_MAX_CHARS).trim()
 }
 
 export async function startRecording(
@@ -219,6 +222,7 @@ async function processBufferedAudio(): Promise<void> {
     }
 
     isProcessing = true
+    statusCallback?.({ state: 'stt-processing' })
 
     const merged = new Float32Array(totalLength)
     let offset = 0
@@ -238,6 +242,7 @@ async function processBufferedAudio(): Promise<void> {
           console.warn('[capture] No STT model configured; transcript will be empty. Set Speech-to-Text model in Settings > AI Models.')
         }
         isProcessing = false
+        statusCallback?.({ state: 'stt-idle' })
         return
       }
 
@@ -250,6 +255,7 @@ async function processBufferedAudio(): Promise<void> {
           restartChunkTimer()
         }
         isProcessing = false
+        statusCallback?.({ state: 'stt-idle' })
         continue
       }
 
@@ -260,12 +266,14 @@ async function processBufferedAudio(): Promise<void> {
         if (vadSegments.length === 0) {
           hasSpeech = false
           isProcessing = false
+          statusCallback?.({ state: 'stt-idle' })
           continue
         }
         const totalSpeechDuration = vadSegments.reduce((sum, s) => sum + (s.end - s.start), 0)
         const minSpeechSec = MIN_SPEECH_DURATION_SEC_BY_CHANNEL[channel]
         if (totalSpeechDuration < minSpeechSec) {
           isProcessing = false
+          statusCallback?.({ state: 'stt-idle' })
           continue
         }
         speechAudio = extractSpeechSegments(merged, vadSegments, SAMPLE_RATE)
@@ -278,6 +286,7 @@ async function processBufferedAudio(): Promise<void> {
       const minSpeechEnergy = MIN_SPEECH_ENERGY_BY_CHANNEL[channel]
       if (speechEnergy < minSpeechEnergy) {
         isProcessing = false
+        statusCallback?.({ state: 'stt-idle' })
         continue
       }
 
@@ -337,9 +346,11 @@ async function processBufferedAudio(): Promise<void> {
           time: formatTimestamp(elapsedSec),
           text: `[STT Error: ${msg}${hint}]`,
         })
+        statusCallback?.({ state: 'stt-idle', error: msg })
       }
     }
     isProcessing = false
+    statusCallback?.({ state: 'stt-idle' })
   }
 
   // Low-latency: if either channel still has enough samples, process again immediately
@@ -379,14 +390,47 @@ function formatTimestamp(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-/** Filter known Whisper/STT hallucinations before emitting transcript. */
+/** Collapse repeated phrases to one occurrence so we keep content instead of dropping. */
+function collapseRepetitions(text: string): string {
+  let out = text.trim()
+  // Sentence-level: drop duplicate consecutive sentences (keep first)
+  const sentences = out.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean)
+  const seen = new Set<string>()
+  const kept: string[] = []
+  for (const s of sentences) {
+    const norm = s.toLowerCase()
+    if (norm && !seen.has(norm)) {
+      seen.add(norm)
+      kept.push(s)
+    }
+  }
+  out = kept.join(' ') || out
+  // Phrase repetition: same 10+ char phrase 3+ times → keep once
+  out = out.replace(/(.{10,}?)(\s+\1){2,}/g, '$1')
+  return out.trim()
+}
+
+/** Capitalize first letter of each sentence and " i " → " I ". */
+function normalizeSentenceCasing(text: string): string {
+  const segments = text.split(/(?<=[.!?])\s+|\n+/)
+  return segments
+    .map((seg) => {
+      const t = seg.trim()
+      if (!t) return t
+      const capped = t.charAt(0).toUpperCase() + t.slice(1)
+      return capped.replace(/\s+i\s+/g, ' I ')
+    })
+    .filter(Boolean)
+    .join(' ')
+}
+
+/** Filter known Whisper/STT hallucinations; collapse repetitions instead of dropping. */
 function filterHallucinatedTranscript(text: string): string | null {
-  const t = text.trim()
-  if (!t) return null
+  const collapsed = collapseRepetitions(text)
+  if (!collapsed) return null
 
-  const lower = t.toLowerCase()
+  const lower = collapsed.toLowerCase()
 
-  // Known video/streaming hallucination phrases (Granola/Notion-quality filtering)
   const hallucinationPatterns = [
     /thank\s+you\s+for\s+watching/i,
     /thanks\s+for\s+watching/i,
@@ -396,13 +440,14 @@ function filterHallucinatedTranscript(text: string): string | null {
     /don't\s+forget\s+to\s+subscribe/i,
     /hit\s+the\s+(bell|subscribe)\s+button/i,
     /^\[music\]$/i, /^\[applause\]$/i, /^\[blank_audio\]$/i,
+    /^\(music\)$/i, /^\(applause\)$/i, /^\(laughter\)$/i,
   ]
   for (const pat of hallucinationPatterns) {
     if (pat.test(lower)) return null
   }
 
-  // Repeated short phrase (same 2–4 words 3+ times in a row)
-  const words = t.split(/\s+/)
+  // Entire segment is only repeated short phrase (2–4 words 3+ times)
+  const words = collapsed.split(/\s+/)
   if (words.length >= 6) {
     for (let len = 2; len <= 4; len++) {
       for (let i = 0; i <= words.length - len * 3; i++) {
@@ -414,10 +459,7 @@ function filterHallucinatedTranscript(text: string): string | null {
     }
   }
 
-  // Long phrase repetition (10+ chars repeated 3+ times)
-  if (/(.{10,}?)(\s+\1){2,}/.test(t)) return null
-
-  return t
+  return normalizeSentenceCasing(collapsed)
 }
 
 function pcmToWav(pcm: Float32Array, sampleRate: number): Buffer {

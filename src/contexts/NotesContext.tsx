@@ -9,6 +9,8 @@ export interface SavedNote {
   duration: string;
   /** Optional start-to-end time range (e.g. "7:00 PM – 7:34 PM") */
   timeRange?: string;
+  /** Optional calendar event id when note was created from a calendar meeting (for mapping back) */
+  calendarEventId?: string;
   personalNotes: string;
   transcript: { speaker: string; time: string; text: string }[];
   summary: {

@@ -12,10 +12,20 @@ import { existsSync } from 'fs'
 const HELPER_NAME = 'syag-apple-llm.swift'
 
 function getHelperPath(): string | null {
-  const packaged = join(app.getPath('resourcesPath'), 'darwin', HELPER_NAME)
-  if (existsSync(packaged)) return packaged
+  try {
+    const packaged = join(app.getPath('resourcesPath'), 'darwin', HELPER_NAME)
+    if (existsSync(packaged)) return packaged
+  } catch {
+    // resourcesPath can throw in some contexts (e.g. dev before ready)
+  }
   const dev = join(app.getAppPath(), 'electron', 'resources', 'darwin', HELPER_NAME)
   if (existsSync(dev)) return dev
+  // Dev: main process runs from out/main/, repo root is ../..
+  const fromMain = join(__dirname, '..', '..', 'electron', 'resources', 'darwin', HELPER_NAME)
+  if (existsSync(fromMain)) return fromMain
+  // Dev: process cwd is project root (e.g. npm run dev)
+  const fromCwd = join(process.cwd(), 'electron', 'resources', 'darwin', HELPER_NAME)
+  if (existsSync(fromCwd)) return fromCwd
   return null
 }
 

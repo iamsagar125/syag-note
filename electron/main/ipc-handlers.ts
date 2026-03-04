@@ -132,7 +132,16 @@ export function registerIPCHandlers(): void {
 
   // --- LLM ---
   ipcMain.handle('llm:summarize', async (_e, data: any) => {
-    return summarize(data.transcript, data.personalNotes, data.model, data.meetingTemplateId, data.customPrompt, data.meetingTitle)
+    return summarize(
+      data.transcript,
+      data.personalNotes,
+      data.model,
+      data.meetingTemplateId,
+      data.customPrompt,
+      data.meetingTitle,
+      data.meetingDuration,
+      data.attendees
+    )
   })
   ipcMain.handle('llm:chat', async (_e, data: any) => {
     const sender = _e.sender

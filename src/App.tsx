@@ -11,6 +11,7 @@ import { FolderProvider } from "@/contexts/FolderContext";
 import { NotesProvider } from "@/contexts/NotesContext";
 import { RecordingProvider } from "@/contexts/RecordingContext";
 import { CalendarProvider } from "@/contexts/CalendarContext";
+import { SidebarVisibilityProvider } from "@/contexts/SidebarVisibilityContext";
 import { GlobalRecordingBanner } from "@/components/GlobalRecordingBanner";
 import { loadPreferences, applyAppearance } from "@/pages/SettingsPage";
 import { isOnboardingComplete } from "@/pages/OnboardingPage";
@@ -125,15 +126,19 @@ const App = () => (
         <Sonner />
         {isElectron ? (
           <HashRouter>
-            <SearchCommandProvider>
-              <AppContent />
-            </SearchCommandProvider>
+            <SidebarVisibilityProvider>
+              <SearchCommandProvider>
+                <AppContent />
+              </SearchCommandProvider>
+            </SidebarVisibilityProvider>
           </HashRouter>
         ) : (
           <BrowserRouter>
-            <SearchCommandProvider>
-              <AppContent />
-            </SearchCommandProvider>
+            <SidebarVisibilityProvider>
+              <SearchCommandProvider>
+                <AppContent />
+              </SearchCommandProvider>
+            </SidebarVisibilityProvider>
           </BrowserRouter>
         )}
       </TooltipProvider>

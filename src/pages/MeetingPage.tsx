@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { MeetingDetail } from "@/components/MeetingDetail";
 import { AskBar } from "@/components/AskBar";
 import { NotesViewToggle } from "@/components/NotesViewToggle";
@@ -12,7 +13,7 @@ import { isElectron } from "@/lib/electron-api";
 export default function MeetingPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { sidebarOpen, toggleSidebar } = useSidebarVisibility();
   const [viewMode, setViewMode] = useState<"my-notes" | "ai-notes">("ai-notes");
   const meeting = meetings.find((m) => m.id === id);
 
@@ -26,12 +27,13 @@ export default function MeetingPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className={cn(
-        "transition-all duration-300 ease-in-out overflow-hidden flex-shrink-0",
-        sidebarOpen ? "w-56" : "w-0"
-      )}>
-        <Sidebar />
-      </div>
+      {sidebarOpen ? (
+        <div className="w-56 flex-shrink-0 overflow-hidden">
+          <Sidebar />
+        </div>
+      ) : (
+        <SidebarExpandTrigger />
+      )}
       <main className="flex flex-1 flex-col min-w-0">
         <div className={cn(
           "flex items-center justify-between px-4 pt-3 pb-0",
@@ -39,7 +41,7 @@ export default function MeetingPage() {
         )}>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={toggleSidebar}
               className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
               title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
             >

@@ -78,15 +78,19 @@ export async function summarize(
   model: string,
   meetingTemplateId?: string,
   customPrompt?: string,
-  meetingTitle?: string
+  meetingTitle?: string,
+  meetingDuration?: string | null,
+  attendees?: string[]
 ): Promise<MeetingSummary> {
   const transcriptText = transcript.map(t => `[${t.time}] ${t.speaker}: ${t.text}`).join('\n')
 
   const templateId = meetingTemplateId || detectMeetingTypeFromContent(transcriptText, personalNotes)
   const template = getTemplate(templateId)
-  const context = buildMeetingContext(
-    meetingTitle?.trim() ? { title: meetingTitle.trim() } : undefined
-  )
+  const context = buildMeetingContext({
+    ...(meetingTitle?.trim() ? { title: meetingTitle.trim() } : {}),
+    ...(meetingDuration != null && meetingDuration !== '' ? { duration: meetingDuration } : {}),
+    ...(attendees?.length ? { attendees } : {}),
+  })
 
   const templatePrompt = customPrompt ? `${template.prompt}\n\n${customPrompt}` : template.prompt
   const effectiveTemplate = { ...template, prompt: templatePrompt }

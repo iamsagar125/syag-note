@@ -145,8 +145,19 @@ const TEMPLATES: Record<string, Omit<MeetingTemplate, 'id'>> = {
     description: 'Default template — works for any meeting',
     prompt: `Auto-detect the meeting type from context and apply the most natural structure.
 Group by topic, not chronologically. Merge user notes into the relevant topic.
-If a clear structure emerges (standup-like, retro-like), lean into it. Otherwise, default to: topics → decisions → action items → open questions.
-Prioritize brevity. One idea per bullet. Skip filler.`,
+If a clear structure emerges (standup-like, retro-like), lean into it. Otherwise: topics → decisions → action items.
+
+TONE (Granola/Notion)
+- One idea per bullet. No filler. No "The team discussed..." or "It was agreed that...".
+- Good: "Ship by Friday." Bad: "It was agreed that we would aim to ship by Friday."
+- First person for the user. Use attendee names in action items when known.
+
+LENGTH (respect meeting duration)
+- Under 15 min → 5–8 bullets total
+- 15–30 min → 8–15 bullets
+- 30–60 min → 15–25 bullets
+- 60+ min → 25–40 bullets
+- Lean tight. Sparse notes = stay minimal; detailed notes = slightly deeper but never verbose.`,
   },
 
   standup: {

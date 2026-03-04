@@ -1,4 +1,5 @@
 import { CalendarEvent } from "@/lib/ics-parser";
+import type { SavedNote } from "@/contexts/NotesContext";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Calendar, Clock, MapPin, FileText, Mic } from "lucide-react";
@@ -9,9 +10,13 @@ interface EventDetailSheetProps {
   event: CalendarEvent | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** When provided, called instead of default navigate (e.g. to open existing note or new-note) */
+  onStartNotes?: (event: CalendarEvent) => void;
+  /** When provided, sheet shows "Open note" instead of "Start Notes" */
+  existingNote?: SavedNote | null;
 }
 
-export function EventDetailSheet({ event, open, onOpenChange }: EventDetailSheetProps) {
+export function EventDetailSheet({ event, open, onOpenChange, onStartNotes, existingNote }: EventDetailSheetProps) {
   const navigate = useNavigate();
 
   if (!event) return null;
@@ -21,8 +26,11 @@ export function EventDetailSheet({ event, open, onOpenChange }: EventDetailSheet
 
   const handleStartNotes = () => {
     onOpenChange(false);
-    // Navigate to new-note with event context
-    navigate("/new-note", { state: { eventTitle: event.title, eventId: event.id } });
+    if (onStartNotes) {
+      onStartNotes(event);
+    } else {
+      navigate("/new-note", { state: { eventTitle: event.title, eventId: event.id } });
+    }
   };
 
   return (
@@ -71,14 +79,25 @@ export function EventDetailSheet({ event, open, onOpenChange }: EventDetailSheet
             </div>
           )}
 
-          {/* Start Notes CTA */}
+          {/* Start Notes / Open note CTA */}
           <div className="pt-4 border-t border-border">
             <Button onClick={handleStartNotes} className="w-full gap-2" size="sm">
-              <Mic className="h-4 w-4" />
-              Start Notes for this Meeting
+              {existingNote ? (
+                <>
+                  <FileText className="h-4 w-4" />
+                  Open note
+                </>
+              ) : (
+                <>
+                  <Mic className="h-4 w-4" />
+                  Start Notes for this Meeting
+                </>
+              )}
             </Button>
             <p className="text-[11px] text-muted-foreground text-center mt-2">
-              Record and transcribe this meeting
+              {existingNote
+                ? (existingNote.summary ? "View summary and transcript" : "Continue recording or view transcript")
+                : "Record and transcribe this meeting"}
             </p>
           </div>
         </div>

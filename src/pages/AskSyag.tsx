@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { ArrowUp, ChevronDown, ChevronRight, FileText, Square } from "lucide-react";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { useNotes } from "@/contexts/NotesContext";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
@@ -24,6 +25,7 @@ const recipes = [
 export default function AskSyag() {
   const { getActiveAIModelLabel, selectedAIModel } = useModelSettings();
   const { notes } = useNotes();
+  const { sidebarOpen } = useSidebarVisibility();
   const api = getElectronAPI();
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -161,8 +163,14 @@ export default function AskSyag() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      <main className="flex flex-1 flex-col min-w-0">
+      {sidebarOpen ? (
+        <div className="w-56 flex-shrink-0 overflow-hidden">
+          <Sidebar />
+        </div>
+      ) : (
+        <SidebarExpandTrigger />
+      )}
+      <main className={cn("flex flex-1 flex-col min-w-0", !sidebarOpen && isElectron && "pl-20")}>
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {isEmpty ? (
             <div className="flex h-full flex-col items-center justify-center px-6">

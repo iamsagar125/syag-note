@@ -1,14 +1,24 @@
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
 import { Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
+import { cn } from "@/lib/utils";
+import { isElectron } from "@/lib/electron-api";
 
 export default function AllNotes() {
   const navigate = useNavigate();
+  const { sidebarOpen } = useSidebarVisibility();
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto">
+      {sidebarOpen ? (
+        <div className="w-56 flex-shrink-0 overflow-hidden">
+          <Sidebar />
+        </div>
+      ) : (
+        <SidebarExpandTrigger />
+      )}
+      <main className={cn("flex-1 overflow-y-auto", !sidebarOpen && isElectron && "pl-20")}>
         <div className="mx-auto max-w-2xl px-6 py-8">
           <h1 className="font-display text-2xl text-foreground mb-1">All Notes</h1>
           <p className="text-xs text-muted-foreground mb-6">0 notes</p>

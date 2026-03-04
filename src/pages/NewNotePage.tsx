@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Sidebar } from "@/components/Sidebar";
+import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
+import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { AskBar } from "@/components/AskBar";
 import { EditableSummary } from "@/components/EditableSummary";
 import { NotesViewToggle } from "@/components/NotesViewToggle";
@@ -141,7 +142,7 @@ export default function NewNotePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string; startFresh?: boolean; triggerPauseAndSummarize?: boolean } | null;
-  const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture, setSessionScratch, getSessionScratch } = useRecording();
+  const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, sttStatus, sttErrorMessage, lastSuccessfulTranscriptTime, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture, setSessionScratch, getSessionScratch } = useRecording();
   const { selectedSTTModel, selectedAIModel } = useModelSettings();
   const api = getElectronAPI();
 
@@ -151,7 +152,7 @@ export default function NewNotePage() {
   const startFreshFromUrl = searchParams.get("startFresh") === "1";
   const startFresh = eventState?.startFresh === true || startFreshFromUrl;
 
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { sidebarOpen, toggleSidebar } = useSidebarVisibility();
   const [recordingState, setRecordingState] = useState<RecordingState>(() => {
     if (isReturning && activeSession) {
       return activeSession.isRecording ? "recording" : "paused";
@@ -240,6 +241,26 @@ export default function NewNotePage() {
   const elapsedSeconds = activeSession?.elapsedSeconds ?? 0;
   const currentTranscript = usingRealAudio ? transcriptLines : fakeTranscriptLines.slice(0, visibleLines);
 
+  // Tick every 10s while recording so we can show "no transcription for a while" after 45s
+  const [, setStaleTick] = useState(0);
+  useEffect(() => {
+    if (recordingState !== "recording" || !selectedSTTModel) return;
+    const id = setInterval(() => setStaleTick((n) => n + 1), 10000);
+    return () => clearInterval(id);
+  }, [recordingState, selectedSTTModel]);
+
+  const sttStale =
+    recordingState === "recording" &&
+    !!selectedSTTModel &&
+    ((lastSuccessfulTranscriptTime != null && Date.now() - lastSuccessfulTranscriptTime > 45000) ||
+      (lastSuccessfulTranscriptTime == null && elapsedSeconds > 45));
+
+  /** Show prominent "no transcript" warning when session has run 2+ min with zero transcript (recording or paused). */
+  const noTranscriptYet =
+    (recordingState === "recording" || recordingState === "paused") &&
+    transcriptLines.length === 0 &&
+    elapsedSeconds >= 120;
+
   useEffect(() => { transcriptRef.current = transcriptLines; }, [transcriptLines]);
   useEffect(() => { meetingTemplateRef.current = meetingTemplate; }, [meetingTemplate]);
 
@@ -280,6 +301,7 @@ export default function NewNotePage() {
             meetingTemplateId: templateId,
             customPrompt,
             meetingTitle: (eventState?.eventTitle || useTitle || "").trim() || undefined,
+            meetingDuration: formatTime(elapsedSeconds),
           });
         } catch (err) {
           console.error('LLM summarization failed, using local fallback:', err);
@@ -316,6 +338,7 @@ export default function NewNotePage() {
           time: timeStr,
           duration: formatTime(elapsedSeconds),
           timeRange,
+          calendarEventId: eventState?.eventId,
           personalNotes: useNotes,
           transcript: finalTranscript,
           summary: generatedSummary,
@@ -329,10 +352,14 @@ export default function NewNotePage() {
       if (!userHasEditedTitleRef.current && generatedSummary.title && generatedSummary.title !== noteTitle && !isGenericTitle(generatedSummary.title)) {
         setTitle(generatedSummary.title);
       }
+      // Once summary is generated while paused, clear session so the live meeting indicator doesn't keep showing
+      if (activeSession && !activeSession.isRecording) {
+        clearSession();
+      }
     } finally {
       setIsSummarizing(false);
     }
-  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, isSummarizing, activeSession?.startTime]);
+  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, isSummarizing, activeSession?.startTime, activeSession?.isRecording, activeSession, clearSession]);
   // Note: userHasEditedTitleRef is a ref, not in deps
 
   // When indicator triggered "pause and summarize", we land here with state; run generateNotes with scratch and clear state
@@ -473,6 +500,7 @@ export default function NewNotePage() {
       time: timeStr,
       duration: formatTime(elapsedSeconds),
       timeRange,
+      calendarEventId: eventState?.eventId,
       personalNotes,
       transcript: transcriptLines,
       summary: null,
@@ -592,6 +620,7 @@ export default function NewNotePage() {
             meetingTemplateId: tid,
             customPrompt,
             meetingTitle: (eventState?.eventTitle || title || "").trim() || undefined,
+            meetingDuration: formatTime(elapsedSeconds),
           });
           setSummary(newSummary);
         } catch {
@@ -732,12 +761,13 @@ export default function NewNotePage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className={cn(
-        "transition-all duration-300 ease-in-out overflow-hidden flex-shrink-0",
-        sidebarOpen ? "w-56" : "w-0"
-      )}>
-        <Sidebar />
-      </div>
+      {sidebarOpen ? (
+        <div className="w-56 flex-shrink-0 overflow-hidden">
+          <Sidebar />
+        </div>
+      ) : (
+        <SidebarExpandTrigger />
+      )}
 
       <main className="flex flex-1 flex-col min-w-0">
         {/* Top bar — pl-20 clears macOS traffic lights when sidebar is collapsed */}
@@ -747,7 +777,7 @@ export default function NewNotePage() {
         )}>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={toggleSidebar}
               className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             >
               {sidebarOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeft className="h-4 w-4" />}
@@ -1044,7 +1074,7 @@ export default function NewNotePage() {
           </div>
 
           {/* Transcript side panel — always visible when recording (so user sees "No STT model" / Listening / errors); when not recording, show if real-time on or there are lines */}
-          {transcriptVisible && (recordingState === "recording" || showRealTimeTranscript || transcriptLines.length > 0) && (
+          {transcriptVisible && (recordingState === "recording" || showRealTimeTranscript || transcriptLines.length > 0 || noTranscriptYet) && (
             <div className="w-[36rem] flex-shrink-0 border-l border-border bg-card/50 overflow-y-auto rounded-tl-2xl rounded-tr-2xl">
               <div className="px-4 py-3 border-b border-border">
                 <div className="flex items-center justify-between gap-1">
@@ -1088,6 +1118,16 @@ export default function NewNotePage() {
                 </div>
               </div>
               <div className="p-3 space-y-4">
+                {!transcriptSearch && noTranscriptYet && (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3">
+                    <p className="text-[13px] font-medium text-amber-800 dark:text-amber-200">
+                      No transcript captured yet ({Math.floor(elapsedSeconds / 60)} min)
+                    </p>
+                    <p className="text-[12px] text-amber-700 dark:text-amber-300/90 mt-1 leading-relaxed">
+                      Check <strong>Settings → Transcription</strong>: try another STT model or verify your API key. Resume recording to retry.
+                    </p>
+                  </div>
+                )}
                 {(() => {
                   const filtered = currentTranscript
                     .map((line, idx) => ({ line, originalIndex: idx }))
@@ -1181,6 +1221,19 @@ export default function NewNotePage() {
                         : "Listening..."}
                     </span>
                   </div>
+                )}
+                {!transcriptSearch && recordingState === "recording" && usingRealAudio && sttStatus === "processing" && (
+                  <p className="text-[10px] text-muted-foreground pt-0.5">Transcribing...</p>
+                )}
+                {!transcriptSearch && (recordingState === "recording" || recordingState === "paused") && sttStatus === "error" && sttErrorMessage && (
+                  <p className="text-[10px] text-destructive pt-0.5" title={sttErrorMessage}>
+                    STT error: {sttErrorMessage.length > 60 ? sttErrorMessage.slice(0, 57) + "…" : sttErrorMessage}
+                  </p>
+                )}
+                {!transcriptSearch && sttStale && (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 pt-0.5">
+                    No transcription for a while. Check your STT model and connection.
+                  </p>
                 )}
                 {!transcriptSearch && (recordingState === "recording" || recordingState === "paused") && activeSTTLabel && (
                   <p className="text-[10px] text-muted-foreground pt-0.5">
