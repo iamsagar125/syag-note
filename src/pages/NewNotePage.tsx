@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Sidebar, SidebarExpandTrigger } from "@/components/Sidebar";
+import { Sidebar } from "@/components/Sidebar";
 import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { AskBar } from "@/components/AskBar";
 import { EditableSummary } from "@/components/EditableSummary";
@@ -761,12 +761,10 @@ export default function NewNotePage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {sidebarOpen ? (
+      {sidebarOpen && (
         <div className="w-56 flex-shrink-0 overflow-hidden">
           <Sidebar />
         </div>
-      ) : (
-        <SidebarExpandTrigger />
       )}
 
       <main className="flex flex-1 flex-col min-w-0">
@@ -1003,24 +1001,6 @@ export default function NewNotePage() {
             </div>
 
             <div className="relative space-y-2">
-              {/* Granola-style: require explicit "Start recording" when landing from calendar/meeting */}
-              {usingRealAudio && !userHasStartedCapture && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUserHasStartedCapture(true);
-                    const meetingTitle = (eventState?.eventTitle ?? title) || undefined;
-                    startAudioCapture(selectedSTTModel || "", { meetingTitle }).catch((err) => {
-                      console.error("Audio capture failed:", err);
-                      toast.error("Recording couldn't start. Check microphone and STT settings.");
-                    });
-                  }}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-accent px-4 py-4 text-sm font-semibold text-accent-foreground hover:opacity-90 transition-opacity"
-                >
-                  <Mic className="h-5 w-5" />
-                  Start recording
-                </button>
-              )}
               <AskBar
                 context="meeting"
                 meetingTitle={title || "New note"}

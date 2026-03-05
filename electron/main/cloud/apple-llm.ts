@@ -10,6 +10,7 @@ import { app } from 'electron'
 import { existsSync } from 'fs'
 
 const HELPER_NAME = 'syag-apple-llm.swift'
+const SWIFT_BIN = '/usr/bin/swift'
 
 function getHelperPath(): string | null {
   if (process.resourcesPath) {
@@ -33,6 +34,16 @@ function getHelperPath(): string | null {
   return null
 }
 
+/** First path we try when resolving the helper (for error messages). */
+function getFirstTriedPath(): string {
+  if (process.resourcesPath) return join(process.resourcesPath, 'darwin', HELPER_NAME)
+  try {
+    return join(app.getPath('resourcesPath'), 'darwin', HELPER_NAME)
+  } catch {
+    return join('resourcesPath', 'darwin', HELPER_NAME)
+  }
+}
+
 export function isAppleFoundationAvailable(): boolean {
   if (process.platform !== 'darwin') return false
   const path = getHelperPath()
@@ -50,7 +61,7 @@ export async function checkAppleFoundationAvailable(): Promise<boolean> {
   if (!helperPath) return false
   try {
     const result = await new Promise<{ ok: boolean; stderr: string }>((resolve) => {
-      const proc = spawn('swift', [helperPath], {
+      const proc = spawn(SWIFT_BIN, [helperPath], {
         stdio: ['pipe', 'pipe', 'pipe'],
       })
       proc.stdin?.end(JSON.stringify({ check: true }))
@@ -72,8 +83,9 @@ export async function chatApple(
 ): Promise<string> {
   const helperPath = getHelperPath()
   if (!helperPath) {
+    const tried = getFirstTriedPath()
     throw new Error(
-      'Apple Foundation helper not found. Requires macOS 26+ (Tahoe) and Apple Silicon. The app bundle should include electron/resources/darwin/syag-apple-llm.swift.'
+      `Apple Foundation helper not found. Requires macOS 26+ (Tahoe) and Apple Silicon. Tried path: ${tried}`
     )
   }
 
@@ -83,7 +95,7 @@ export async function chatApple(
   })
 
   return new Promise((resolve, reject) => {
-    const proc = spawn('swift', [helperPath], {
+    const proc = spawn(SWIFT_BIN, [helperPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 

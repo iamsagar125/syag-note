@@ -404,8 +404,11 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
 
   const getAvailableAIModels = () => {
     const models: { value: string; label: string; group: string }[] = [];
+    const isDarwin = api?.app?.getPlatform?.() === "darwin";
     if (appleFoundationAvailable) {
       models.push({ value: "apple:foundation", label: "Apple (on-device)", group: "System" });
+    } else if (isDarwin) {
+      models.push({ value: "apple:foundation", label: "Apple (on-device) (requires macOS 26+)", group: "System" });
     }
     localModels
       .filter((m) => m.type === "llm" && downloadStates[m.id] === "downloaded")
