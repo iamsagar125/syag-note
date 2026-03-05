@@ -290,10 +290,10 @@ const Index = () => {
                 </button>
               </div>
             ) : (
-              <div>
+              <div className="space-y-7">
                 {Object.entries(grouped).map(([date, items]) => (
-                  <div key={date} className="mb-6">
-                    <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground px-3 mb-1">
+                  <div key={date}>
+                    <h3 className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground/70 px-3 mb-2">
                       {(() => {
                         try {
                           const parsed = parse(date, "MMM d, yyyy", new Date());
@@ -307,12 +307,12 @@ const Index = () => {
                       {items.map((n) => {
                         const isRecording = activeSession?.noteId === n.id && !n.summary;
                         return (
-                        <div key={n.id} className="group flex items-center gap-2 rounded-lg px-3 py-2.5 hover:bg-card border border-transparent hover:border-border transition-colors">
+                        <div key={n.id} className="group flex items-center gap-2 rounded-lg px-3 py-2.5 transition-all duration-200 hover:bg-card hover:shadow-sm border border-transparent hover:border-border">
                           <button
                             onClick={() => navigate(isRecording ? `/new-note?session=${n.id}` : `/note/${n.id}`)}
                             className="flex flex-1 items-center gap-3 text-left min-w-0"
                           >
-                            <FileText className="h-4 w-4 text-muted-foreground/40 flex-shrink-0" />
+                            <FileText className="h-4 w-4 text-muted-foreground/30 flex-shrink-0 transition-colors duration-200 group-hover:text-accent/60" />
                             <div className="flex-1 min-w-0">
                               <h3 className="font-body text-[15px] font-medium text-foreground truncate">{n.title}</h3>
                               {isRecording && (
@@ -320,7 +320,7 @@ const Index = () => {
                               )}
                             </div>
                           </button>
-                          <span className="text-[11px] text-muted-foreground flex-shrink-0">{n.timeRange ?? n.time}</span>
+                          <span className="text-[11px] text-muted-foreground/60 flex-shrink-0">{n.timeRange ?? n.time}</span>
                           <NoteCardMenu
                             noteId={n.id}
                             currentFolderId={n.folderId}
