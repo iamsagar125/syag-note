@@ -1,4 +1,5 @@
 import { getSetting } from '../storage/database'
+import { parseSTTModel } from '@/lib/stt-model'
 import { chatOpenAI, sttOpenAI } from './openai'
 import { chatAnthropic } from './anthropic'
 import { chatCopart, sttCopart, listCopartModels, isCopartSttModel } from './copart'
@@ -70,14 +71,15 @@ export async function routeLLM(
  * prompt: optional natural-sentence context (Groq/OpenAI Whisper initial_prompt)
  */
 export async function routeSTT(wavBuffer: Buffer, model: string, vocabulary?: string[], prompt?: string): Promise<string> {
-  if (!model?.trim()) {
-    throw new Error('No STT model selected. Choose one in Settings > AI Models.')
+  const parsed = parseSTTModel(model)
+  if (!parsed) {
+    throw new Error(
+      !model?.trim()
+        ? 'No STT model selected. Choose one in Settings > AI Models.'
+        : 'Invalid STT model. Choose a cloud provider (e.g. Deepgram) in Settings > AI Models.'
+    )
   }
-  const [providerId, ...rest] = model.split(':')
-  const modelName = rest.join(':')
-  if (!providerId?.trim()) {
-    throw new Error('Invalid STT model. Choose a cloud provider (e.g. Deepgram) in Settings > AI Models.')
-  }
+  const { providerId, modelName } = parsed
 
   const apiKey = getApiKey(providerId)
 

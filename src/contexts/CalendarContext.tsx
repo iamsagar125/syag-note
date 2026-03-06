@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { CalendarEvent, parseICS } from "@/lib/ics-parser";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
 interface CalendarContextValue {
   events: CalendarEvent[];
@@ -54,9 +55,16 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
   const fetchAndParse = useCallback(async (url: string, silent = false) => {
     if (!silent) { setIsLoading(true); setError(null); }
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch");
-      const text = await res.text();
+      let text: string;
+      if (isElectron && getElectronAPI()?.app?.fetchUrl) {
+        const { ok, body } = await getElectronAPI()!.app!.fetchUrl(url);
+        if (!ok) throw new Error("Failed to fetch");
+        text = body;
+      } else {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("Failed to fetch");
+        text = await res.text();
+      }
       const parsed = parseICS(text);
       if (parsed.length === 0 && !silent) {
         setError("No events found at this URL");

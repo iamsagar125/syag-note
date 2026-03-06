@@ -251,21 +251,3 @@ export function Sidebar() {
     </aside>
   );
 }
-
-/** Renders a slim trigger to show the sidebar when it is hidden. Use in page layout when sidebar is closed. */
-export function SidebarExpandTrigger() {
-  const { setSidebarOpen } = useSidebarVisibility();
-  return (
-    <button
-      onClick={() => setSidebarOpen(true)}
-      className={cn(
-        "fixed left-0 top-0 z-20 flex h-12 w-10 items-center justify-center rounded-r-md border border-l-0 border-border bg-sidebar text-sidebar-foreground shadow-sm transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-        isElectron && "top-10"
-      )}
-      title="Show sidebar"
-      aria-label="Show sidebar"
-    >
-      <PanelLeft className="h-4 w-4" />
-    </button>
-  );
-}

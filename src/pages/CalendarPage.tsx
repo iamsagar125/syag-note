@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Calendar, Link2, LayoutGrid, List, MapPin, Clock } from "lucide-react";
-import { Sidebar, SidebarExpandTrigger, SidebarCollapseButton } from "@/components/Sidebar";
+import { Sidebar, SidebarCollapseButton } from "@/components/Sidebar";
 import { cn } from "@/lib/utils";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { useNotes } from "@/contexts/NotesContext";
@@ -148,12 +148,10 @@ export default function CalendarPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {sidebarOpen ? (
+      {sidebarOpen && (
         <div className="w-56 flex-shrink-0 overflow-hidden">
           <Sidebar />
         </div>
-      ) : (
-        <SidebarExpandTrigger />
       )}
       <main className={cn("flex-1 overflow-y-auto", !sidebarOpen && isElectron && "pl-20")}>
         <div className="flex items-center justify-between px-4 pt-3 pb-0">

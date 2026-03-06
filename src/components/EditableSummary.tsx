@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  CheckCircle2, Circle, Pencil, Users
+  CheckCircle2, Circle, Pencil, Users, X
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +67,7 @@ export interface SummaryData {
   questionsAndOpenItems?: string[];
   followUps?: string[];
   keyQuotes?: KeyQuote[];
+  attachments?: { type: "image"; url: string }[];
 }
 
 interface EditableSummaryProps {
@@ -147,6 +148,36 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
     onUpdate?.(updated);
   };
 
+  const handleAddAttachment = (url: string) => {
+    const next = [...(localSummary.attachments || []), { type: "image" as const, url }];
+    commit({ ...localSummary, attachments: next });
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    const next = (localSummary.attachments || []).filter((_, i) => i !== index);
+    commit({ ...localSummary, attachments: next.length ? next : undefined });
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const url = reader.result as string;
+          if (url) handleAddAttachment(url);
+        };
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  };
+
   const rawActions = localSummary.actionItems || localSummary.nextSteps?.map((s) => ({
     ...s,
     priority: "medium" as const,
@@ -159,9 +190,10 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
   const decisions = localSummary.decisions || [];
   const quotes = localSummary.keyQuotes || [];
   const attendees = localSummary.attendees || [];
+  const attachments = localSummary.attachments || [];
 
   return (
-    <div className="animate-fade-in space-y-4 font-body">
+    <div className="animate-fade-in space-y-4 font-body" onPaste={handlePaste}>
       {attendees.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <Users className="h-3 w-3 text-muted-foreground/40" />
@@ -492,6 +524,38 @@ export function EditableSummary({ summary, onUpdate }: EditableSummaryProps) {
               <p className="text-[12px] text-muted-foreground/70">— {q.speaker}</p>
             </blockquote>
           ))}
+        </div>
+      )}
+
+      {attachments.length > 0 && (
+        <div className="pt-2">
+          <h3 className="text-[15px] font-semibold text-foreground mb-1.5">Attachments</h3>
+          <div className="flex flex-wrap gap-2">
+            {attachments.map((att, i) => (
+              <div key={i} className="relative group/thumb rounded-lg border border-border overflow-hidden bg-muted/30">
+                <a
+                  href={att.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block max-h-[120px] max-w-[180px]"
+                >
+                  <img
+                    src={att.url}
+                    alt=""
+                    className="h-[120px] w-auto object-contain"
+                  />
+                </a>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveAttachment(i)}
+                  className="absolute top-1 right-1 p-1 rounded bg-background/80 border border-border opacity-0 group-hover/thumb:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                  aria-label="Remove image"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

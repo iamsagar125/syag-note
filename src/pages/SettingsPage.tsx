@@ -5,7 +5,7 @@ import {
   Search
 } from "lucide-react";
 import { toast } from "sonner";
-import { Sidebar, SidebarExpandTrigger, SidebarCollapseButton } from "@/components/Sidebar";
+import { Sidebar, SidebarCollapseButton } from "@/components/Sidebar";
 import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useRef, useMemo } from "react";
@@ -46,6 +46,9 @@ const TOGGLE_DB_KEYS: Record<string, string> = {
   calendarSync: 'calendar-sync',
   showUpcoming: 'show-upcoming-meetings',
   meetingDetectionRequireMic: 'meeting-detection-require-mic',
+  audioNoiseSuppression: 'audio-noise-suppression',
+  audioDenoiseBeforeStt: 'audio-denoise-before-stt',
+  useDiarization: 'use-diarization',
 };
 
 const DEFAULT_TOGGLES: Record<string, boolean> = {
@@ -59,6 +62,9 @@ const DEFAULT_TOGGLES: Record<string, boolean> = {
   calendarSync: true,
   showUpcoming: true,
   meetingDetectionRequireMic: false,
+  audioNoiseSuppression: true,
+  audioDenoiseBeforeStt: false,
+  useDiarization: false,
 };
 
 function Toggle({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) {
@@ -553,12 +559,10 @@ export default function SettingsPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {sidebarOpen ? (
+      {sidebarOpen && (
         <div className="w-56 flex-shrink-0 overflow-hidden">
           <Sidebar />
         </div>
-      ) : (
-        <SidebarExpandTrigger />
       )}
       <main className={cn("flex-1 overflow-y-auto", !sidebarOpen && isElectron && "pl-20")}>
         <div className="flex items-center justify-between px-4 pt-3 pb-0">
@@ -635,7 +639,7 @@ export default function SettingsPage() {
                   </div>
                   <div>
                     <label className="text-[13px] font-medium text-foreground mb-2 block">Custom vocabulary</label>
-                    <p className="text-[11px] text-muted-foreground mb-2">Add company-specific terms to improve transcription accuracy. One term per line.</p>
+                    <p className="text-[11px] text-muted-foreground mb-2">Add company-specific terms to improve transcription accuracy. Used as keywords for Deepgram and as context for local Whisper; one term per line.</p>
                     <textarea
                       value={customTerms}
                       onChange={(e) => handleCustomTermsChange(e.target.value)}
@@ -962,6 +966,15 @@ export default function SettingsPage() {
                     </SettingRow>
                     <SettingRow label="Auto-generate AI notes" description="Create summaries and action items when recording ends">
                       <Toggle enabled={toggles.aiSummaries} onToggle={() => toggle("aiSummaries")} />
+                    </SettingRow>
+                    <SettingRow label="Browser noise suppression" description="Use the browser’s built-in noise suppression on the microphone. Turn off if it causes artifacts or cuts speech.">
+                      <Toggle enabled={toggles.audioNoiseSuppression} onToggle={() => toggle("audioNoiseSuppression")} />
+                    </SettingRow>
+                    <SettingRow label="Reduce noise before transcription" description="Apply a noise gate in the app before speech detection. Quiets low-level background noise; use if transcription picks up fan or room noise.">
+                      <Toggle enabled={toggles.audioDenoiseBeforeStt} onToggle={() => toggle("audioDenoiseBeforeStt")} />
+                    </SettingRow>
+                    <SettingRow label="Speaker diarization (mic only)" description="When only the microphone is used, label who spoke (Speaker 1, 2, …) instead of “You”. Uses on-device speaker embeddings; may add a short delay.">
+                      <Toggle enabled={toggles.useDiarization} onToggle={() => toggle("useDiarization")} />
                     </SettingRow>
                   </div>
                   <div>

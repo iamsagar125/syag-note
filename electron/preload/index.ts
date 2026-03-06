@@ -128,6 +128,9 @@ const electronAPI = {
 
   app: {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
+    /** Fetch URL from main process (bypasses CORS for calendar ICS, e.g. Outlook). Returns { ok, status, body }. */
+    fetchUrl: (url: string) =>
+      ipcRenderer.invoke('fetch:url', url) as Promise<{ ok: boolean; status: number; body: string }>,
     getPlatform: () => process.platform,
     isAppleFoundationAvailable: () => ipcRenderer.invoke('app:apple-foundation-available') as Promise<boolean>,
     setLoginItem: (enabled: boolean) => ipcRenderer.invoke('app:set-login-item', enabled),

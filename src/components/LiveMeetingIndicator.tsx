@@ -12,7 +12,7 @@ function formatTime(seconds: number) {
 }
 
 export function LiveMeetingIndicator() {
-  const { activeSession, pauseAudioCapture } = useRecording();
+  const { activeSession } = useRecording();
   const navigate = useNavigate();
   const location = useLocation();
   const [manuallyHidden, setManuallyHidden] = useState(false);
@@ -37,23 +37,16 @@ export function LiveMeetingIndicator() {
   const handleTimerClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (activeSession?.isRecording) {
-        pauseAudioCapture().then(() => {
-          navigate(`/new-note?session=${activeSession?.noteId}`, {
-            state: { triggerPauseAndSummarize: true },
-          });
-        });
-      } else {
-        handleGoToNote();
-      }
+      handleGoToNote();
     },
-    [activeSession?.noteId, activeSession?.isRecording, navigate, pauseAudioCapture]
+    [handleGoToNote]
   );
 
   const prefs = loadPreferences();
 
   if (
     !activeSession ||
+    !activeSession.isRecording ||
     location.pathname === "/new-note" ||
     !prefs.showRecordingIndicator ||
     manuallyHidden
@@ -100,7 +93,7 @@ export function LiveMeetingIndicator() {
               ? "border-border bg-card text-muted-foreground hover:text-foreground"
               : "border-accent/30 bg-accent/10 text-accent hover:bg-accent/20"
           )}
-          title={isRecording ? "Pause and go to note" : "Go to note"}
+          title="Go to note"
         >
           {elapsed && <span className="text-[11px] font-medium">{elapsed}</span>}
           {isRecording ? (

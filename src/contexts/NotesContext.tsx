@@ -21,6 +21,7 @@ export interface SavedNote {
     discussionTopics?: { topic: string; summary: string; speakers: string[] }[];
     decisions?: string[];
     questionsAndOpenItems?: string[];
+    attachments?: { type: "image"; url: string }[];
   } | null;
   folderId: string | null;
 }

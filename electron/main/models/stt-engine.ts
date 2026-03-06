@@ -387,7 +387,13 @@ for line in sys.stdin:
         req = json.loads(line.strip())
         audio_path = req.get("audio_path", "")
         prompt = req.get("prompt", "")
-        kwargs = {"path_or_hf_repo": _model_repo, "language": "en", "word_timestamps": True, "condition_on_previous_text": False}
+        kwargs = {
+            "path_or_hf_repo": _model_repo,
+            "language": "en",
+            "temperature": 0.0,
+            "word_timestamps": True,
+            "condition_on_previous_text": False,
+        }
         if prompt:
             kwargs["initial_prompt"] = prompt
         result = mlx_whisper.transcribe(audio_path, **kwargs)
@@ -427,6 +433,7 @@ function ensureMLXWorker(): Promise<void> {
     mlxWorkerReady = false
     mlxWorker = spawn('nice', ['-n', '10', 'python3', '-u', '-c', MLX_WORKER_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: getEnvPathWithBrew() },
     })
 
     let resolved = false
@@ -512,6 +519,7 @@ export async function installMLXWhisper(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const proc = spawn('python3', ['-m', 'pip', 'install', 'mlx-whisper'], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: getEnvPathWithBrew() },
     })
     let stderr = ''
     proc.stderr?.on('data', (d) => { stderr += d.toString() })
@@ -886,7 +894,10 @@ function ensureTheStageWorker(): Promise<void> {
       return
     }
     thestageWorkerReady = false
-    thestageWorker = spawn('nice', ['-n', '10', 'python3', '-u', '-c', THESTAGE_WORKER_SCRIPT], { stdio: ['pipe', 'pipe', 'pipe'] })
+    thestageWorker = spawn('nice', ['-n', '10', 'python3', '-u', '-c', THESTAGE_WORKER_SCRIPT], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: getEnvPathWithBrew() },
+    })
     let resolved = false
     let stderrBuf = ''
     thestageWorker.stderr?.on('data', (d: Buffer) => { stderrBuf += d.toString() })
@@ -947,6 +958,7 @@ export async function installTheStageWhisper(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const proc = spawn('python3', ['-m', 'pip', 'install', 'thestage-speechkit[apple]'], {
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: getEnvPathWithBrew() },
     })
     let stderr = ''
     proc.stderr?.on('data', (d) => { stderr += d.toString() })

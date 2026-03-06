@@ -2,16 +2,35 @@ import { processWithLocalSTT, resetContext, type STTResult } from '../models/stt
 import { routeSTT } from '../cloud/router'
 import { sttSystemDarwin } from './stt-system-darwin'
 import { runVAD, ensureVADModel } from './vad'
+import { diarize } from './diarization'
 import { getSetting } from '../storage/database'
+import { filterHallucinatedTranscript } from '@/lib/transcript-filter'
+import { buildWhisperPrompt } from '@/lib/whisper-prompt'
+import { resampleAudio } from './processor'
 
-export type TranscriptCallback = (chunk: { speaker: string; time: string; text: string }) => void
+export type TranscriptWord = { word: string; start: number; end: number }
+export type TranscriptCallback = (chunk: {
+  speaker: string
+  time: string
+  text: string
+  words?: TranscriptWord[]
+}) => void
 export type StatusCallback = (status: { state: string; error?: string }) => void
 
 let isRecording = false
 let isPaused = false
 let transcriptCallback: TranscriptCallback | null = null
 let statusCallback: StatusCallback | null = null
-const audioBuffers: Float32Array[][] = [[], []]
+
+// Ring buffer per channel: last RING_DURATION_SEC of audio, never drained
+const SAMPLE_RATE = 16000
+const RING_DURATION_SEC = 15
+const RING_SIZE = RING_DURATION_SEC * SAMPLE_RATE
+const ringBuffers: Float32Array[] = [new Float32Array(RING_SIZE), new Float32Array(RING_SIZE)]
+const ringWriteIndex: number[] = [0, 0]
+/** Index up to which we've already sent audio to STT (per channel). */
+const ringProcessedEndIndex: number[] = [0, 0]
+
 let recordingStartTime = 0
 let chunkTimer: ReturnType<typeof setInterval> | null = null
 let silenceTimer: ReturnType<typeof setInterval> | null = null
@@ -24,19 +43,24 @@ let consecutiveSilentChunks = 0
 let hasLoggedNoSTTModelThisSession = false
 /** When true, do not run live STT during recording; run once on full buffer when recording stops. */
 let deferTranscription = false
+/** Sample rate of audio from renderer (may differ from 16kHz on some browsers). */
+let captureSampleRate = 16000
+/** Count of chunks dropped per channel when ring buffer overflows (STT too slow). */
+let droppedChunksByChannel: number[] = [0, 0]
+let hasNotifiedOverflow = false
 
 // Near real-time: process every 2.5s when active, 15s when idle; 1s minimum buffer for faster first result
 const CHUNK_INTERVAL_ACTIVE_MS = 2500
 const CHUNK_INTERVAL_IDLE_MS = 15000
-const SAMPLE_RATE = 16000
 // Auto-pause on silence disabled — user manually pauses and uses "Generate summary" button
 const MIN_SAMPLES_PER_CHANNEL = 16000 * 1 // 1s minimum for STT (faster first result; APIs support short audio)
 // Diarization is channel-based: channel 0 = mic (You), channel 1 = system audio (Others).
 // When you're muted, mic may still send silence/comfort noise; we use stricter gates for "You" to avoid false labels.
 const SPEAKER_BY_CHANNEL = ['You', 'Others'] as const
-const MIN_ENERGY_BY_CHANNEL = [0.0004, 0.0001] as const   // You: stricter so muted mic doesn't produce segments
-const MIN_SPEECH_ENERGY_BY_CHANNEL = [0.0012, 0.0004] as const
-const MIN_SPEECH_DURATION_SEC_BY_CHANNEL = [0.8, 0.5] as const  // You: require clearer/longer speech
+// Slightly relaxed for channel 0 so quiet speech is not skipped (defer path).
+const MIN_ENERGY_BY_CHANNEL = [0.0003, 0.0001] as const
+const MIN_SPEECH_ENERGY_BY_CHANNEL = [0.001, 0.0004] as const
+const MIN_SPEECH_DURATION_SEC_BY_CHANNEL = [0.8, 0.5] as const
 
 export let currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
 
@@ -45,12 +69,289 @@ export function setChunkInterval(ms: number): void {
   restartChunkTimer()
 }
 
+/** Push samples into the ring buffer for a channel (overwrites oldest when full). */
+function ringPush(channel: number, samples: Float32Array): void {
+  const unprocessed = ringUnprocessedLength(channel)
+  if (unprocessed + samples.length > RING_SIZE) {
+    droppedChunksByChannel[channel]++
+    if (!hasNotifiedOverflow) {
+      hasNotifiedOverflow = true
+      statusCallback?.({ state: 'stt-idle', error: 'Audio buffer overflow; some audio may be missing.' })
+    }
+  }
+  const ring = ringBuffers[channel]
+  let wi = ringWriteIndex[channel]
+  for (let i = 0; i < samples.length; i++) {
+    ring[wi] = samples[i]
+    wi = (wi + 1) % RING_SIZE
+  }
+  ringWriteIndex[channel] = wi
+}
+
+/** Number of unprocessed samples (from processedEnd to writeIndex, wrapping). */
+function ringUnprocessedLength(channel: number): number {
+  const wi = ringWriteIndex[channel]
+  const pe = ringProcessedEndIndex[channel]
+  return (wi - pe + RING_SIZE) % RING_SIZE
+}
+
+/**
+ * Copy unprocessed samples from ring into a linear Float32Array and advance processed index.
+ * Returns null if unprocessed length is 0 or less than minLength.
+ */
+function ringTakeUnprocessed(channel: number, minLength: number): Float32Array | null {
+  const n = ringUnprocessedLength(channel)
+  if (n < minLength) return null
+  const ring = ringBuffers[channel]
+  const pe = ringProcessedEndIndex[channel]
+  const out = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    out[i] = ring[(pe + i) % RING_SIZE]
+  }
+  ringProcessedEndIndex[channel] = (pe + n) % RING_SIZE
+  return out
+}
+
+/** Read last N seconds from ring (read-only, does not advance processed index). */
+function ringReadRecent(channel: number, durationSec: number): Float32Array {
+  const n = Math.min(Math.floor(durationSec * SAMPLE_RATE), RING_SIZE)
+  if (n <= 0) return new Float32Array(0)
+  const ring = ringBuffers[channel]
+  const wi = ringWriteIndex[channel]
+  const out = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    out[i] = ring[(wi - n + i + RING_SIZE) % RING_SIZE]
+  }
+  return out
+}
+
+// ─── VAD-driven segmentation (silence / max-length closure + overlap) ─────────
+const SEG_TICK_MS = 250
+const SEG_WINDOW_READ_SEC = 10
+const MIN_SEG_LEN_SEC = 2
+/** Slightly lower for system audio (channel 1) so first transcript from e.g. YouTube appears sooner. */
+const MIN_SEG_LEN_SEC_CH1 = 1.5
+/** Max segment length (seconds); longer to avoid mid-sentence splits. Overridable via segment-max-length-sec setting. */
+const DEFAULT_MAX_SEG_LEN_SEC = 10
+const MAX_SEG_LEN_SEC = (() => {
+  try {
+    const v = getSetting('segment-max-length-sec')
+    const n = v ? parseInt(v, 10) : NaN
+    return !Number.isNaN(n) && n >= 5 && n <= 30 ? n : DEFAULT_MAX_SEG_LEN_SEC
+  } catch {
+    return DEFAULT_MAX_SEG_LEN_SEC
+  }
+})()
+/** Silence duration (seconds) before closing segment. Overridable via segment-silence-threshold-sec setting. */
+const DEFAULT_SILENCE_THRESHOLD_SEC = 0.7
+const SILENCE_THRESHOLD_SEC = (() => {
+  try {
+    const v = getSetting('segment-silence-threshold-sec')
+    const n = v ? parseFloat(v) : NaN
+    return !Number.isNaN(n) && n >= 0.3 && n <= 2 ? n : DEFAULT_SILENCE_THRESHOLD_SEC
+  } catch {
+    return DEFAULT_SILENCE_THRESHOLD_SEC
+  }
+})()
+const OVERLAP_SEC = 0.75
+const OVERLAP_SAMPLES = Math.floor(OVERLAP_SEC * SAMPLE_RATE)
+
+interface SegmentToTranscribe {
+  id: number
+  channel: number
+  startTime: number
+  endTime: number
+  audioSamples: Float32Array
+}
+
+let segmentIdCounter = 0
+const pendingSegments: SegmentToTranscribe[] = []
+let segmentationTimer: ReturnType<typeof setInterval> | null = null
+
+type SegmentState = {
+  startTime: number
+  chunks: Float32Array[]
+  lastSpeechTime: number
+}
+
+const segmentState: SegmentState[] = [
+  { startTime: 0, chunks: [], lastSpeechTime: 0 },
+  { startTime: 0, chunks: [], lastSpeechTime: 0 },
+]
+
+let segmentationBusy = false
+
+async function runSegmentationLoop(): Promise<void> {
+  if (!isRecording || isPaused || deferTranscription || !transcriptCallback) return
+
+  const nowSec = (Date.now() - recordingStartTime) / 1000
+  const windowLenSec = SEG_WINDOW_READ_SEC
+  const tailDurationSec = SEG_TICK_MS / 1000
+
+  for (const channel of [0, 1]) {
+    const window = ringReadRecent(channel, windowLenSec)
+    if (window.length < SAMPLE_RATE * 0.5) continue
+
+    let vadSegments: Array<{ start: number; end: number }> = []
+    try {
+      vadSegments = await runVAD(window, SAMPLE_RATE)
+    } catch {
+      continue
+    }
+
+    const windowLenSecActual = window.length / SAMPLE_RATE
+    const tailStartSec = windowLenSecActual - tailDurationSec
+    const speechInTail = vadSegments.some(
+      (s) => s.end > tailStartSec && s.start < windowLenSecActual
+    )
+
+    const state = segmentState[channel]
+    const totalSamples = state.chunks.reduce((sum, c) => sum + c.length, 0)
+    const segmentDurationSec = totalSamples / SAMPLE_RATE
+
+    if (speechInTail) {
+      const tailSamples = Math.floor(tailDurationSec * SAMPLE_RATE)
+      const tailStart = Math.max(0, window.length - tailSamples)
+      state.chunks.push(window.subarray(tailStart, window.length).slice())
+      state.lastSpeechTime = nowSec
+    } else {
+      const silenceDuration = nowSec - state.lastSpeechTime
+      const minSegLen = channel === 1 ? MIN_SEG_LEN_SEC_CH1 : MIN_SEG_LEN_SEC
+      const shouldClose =
+        segmentDurationSec >= minSegLen &&
+        (silenceDuration >= SILENCE_THRESHOLD_SEC || segmentDurationSec >= MAX_SEG_LEN_SEC)
+
+      if (shouldClose && state.chunks.length > 0) {
+        const full = new Float32Array(totalSamples)
+        let off = 0
+        for (const c of state.chunks) {
+          full.set(c, off)
+          off += c.length
+        }
+        const overlapLen = Math.min(OVERLAP_SAMPLES, Math.floor(full.length / 2))
+        const segmentEndSec = nowSec - silenceDuration
+        const segmentStartSec = segmentEndSec - segmentDurationSec
+
+        pendingSegments.push({
+          id: ++segmentIdCounter,
+          channel,
+          startTime: segmentStartSec,
+          endTime: segmentEndSec,
+          audioSamples: full,
+        })
+
+        state.startTime = segmentEndSec - OVERLAP_SEC
+        state.chunks = [full.subarray(full.length - overlapLen).slice()]
+        state.lastSpeechTime = nowSec
+      }
+    }
+  }
+}
+
+/** Process one segment from the queue: STT then send { speaker, time, text }. */
+async function processOneSegment(seg: SegmentToTranscribe): Promise<void> {
+  if (!transcriptCallback) return
+  const speaker = SPEAKER_BY_CHANNEL[seg.channel]
+  const timeStr = formatTimestamp(seg.startTime)
+  try {
+    statusCallback?.({ state: 'stt-processing' })
+    if (!currentSTTModel) return
+    // Optional: noise gate before STT (same as processBufferedAudio)
+    if (getSetting('audio-denoise-before-stt') === 'true') {
+      const thresholdStr = getSetting('audio-denoise-threshold')
+      const threshold = thresholdStr ? Math.max(0, Math.min(1, parseFloat(thresholdStr))) : 0.01
+      if (!Number.isNaN(threshold)) {
+        const samples = seg.audioSamples
+        for (let i = 0; i < samples.length; i++) {
+          if (Math.abs(samples[i]) < threshold) samples[i] = 0
+        }
+      }
+    }
+    const wavBuffer = pcmToWav(seg.audioSamples, SAMPLE_RATE)
+    let sttResult: STTResult
+    if (currentSTTModel.startsWith('local:')) {
+      sttResult = await processWithLocalSTT(wavBuffer, currentSTTModel.replace('local:', ''), customVocabulary)
+    } else if (currentSTTModel.startsWith('system:')) {
+      const text = await sttSystemDarwin(wavBuffer)
+      sttResult = { text, words: [] }
+    } else {
+      const vocab = sttVocabularyTerms.length > 0 ? sttVocabularyTerms : undefined
+      const prompt = customVocabulary || undefined
+      const text = await routeSTT(wavBuffer, currentSTTModel, vocab, prompt)
+      sttResult = { text, words: [] }
+    }
+    const filtered = filterHallucinatedTranscript(sttResult.text)
+    if (filtered) {
+      const words: TranscriptWord[] | undefined = sttResult.words?.length
+        ? sttResult.words.map((w) => ({
+            word: w.word.trim(),
+            start: w.start + seg.startTime,
+            end: w.end + seg.startTime,
+          })).filter((w) => w.word.length > 0)
+        : undefined
+      transcriptCallback({ speaker, time: timeStr, text: filtered, words })
+    }
+  } catch (err: any) {
+    console.error('[capture] Segment STT error:', err)
+    if (transcriptCallback)
+      transcriptCallback({ speaker: 'System', time: timeStr, text: `[STT Error: ${err?.message ?? String(err)}]` })
+  } finally {
+    statusCallback?.({ state: 'stt-idle' })
+  }
+}
+
+/** Close any open segment per channel and push to pendingSegments (for stop/flush). */
+function flushOpenSegments(): void {
+  const nowSec = (Date.now() - recordingStartTime) / 1000
+  for (const channel of [0, 1]) {
+    const state = segmentState[channel]
+    if (state.chunks.length === 0) continue
+    const totalSamples = state.chunks.reduce((sum, c) => sum + c.length, 0)
+    if (totalSamples < SAMPLE_RATE * 0.5) continue
+    const full = new Float32Array(totalSamples)
+    let off = 0
+    for (const c of state.chunks) {
+      full.set(c, off)
+      off += c.length
+    }
+    const segmentDurationSec = totalSamples / SAMPLE_RATE
+    const segmentStartSec = nowSec - segmentDurationSec
+    pendingSegments.push({
+      id: ++segmentIdCounter,
+      channel,
+      startTime: segmentStartSec,
+      endTime: nowSec,
+      audioSamples: full,
+    })
+    state.chunks = []
+  }
+}
+
+/** Drain pending segments one by one (async). */
+async function drainQueue(): Promise<void> {
+  while (pendingSegments.length > 0 && transcriptCallback) {
+    const seg = pendingSegments.shift()!
+    await processOneSegment(seg)
+  }
+}
+
+function processQueue(): void {
+  if (pendingSegments.length === 0 || isProcessing || !transcriptCallback) return
+  isProcessing = true
+  const seg = pendingSegments.shift()!
+  processOneSegment(seg).finally(() => {
+    isProcessing = false
+    if (pendingSegments.length > 0) setImmediate(() => processQueue())
+  })
+}
+
 function restartChunkTimer(): void {
   if (chunkTimer) clearInterval(chunkTimer)
-  if (!isRecording) return
+  chunkTimer = null
+  if (!isRecording || !deferTranscription) return
   chunkTimer = setInterval(() => {
     if (isPaused || isProcessing) return
-    const hasData = audioBuffers[0].length > 0 || audioBuffers[1].length > 0
+    const hasData = ringUnprocessedLength(0) >= MIN_SAMPLES_PER_CHANNEL || ringUnprocessedLength(1) >= MIN_SAMPLES_PER_CHANNEL
     if (hasData) processBufferedAudio()
   }, currentChunkIntervalMs)
 }
@@ -59,26 +360,19 @@ let meetingContextVocabulary: string[] = []
 let meetingTitleForPrompt = ''
 let sttVocabularyTerms: string[] = []
 
-/** Build natural-sentence prompt for Whisper (proper nouns, domain terms). Max ~224 tokens (~800 chars). */
-const WHISPER_PROMPT_MAX_CHARS = 800
-
-function buildWhisperPrompt(title: string, vocabulary: string[]): string {
-  const parts: string[] = []
-  if (title?.trim()) parts.push(`${title.trim()} meeting.`)
-  if (vocabulary.length > 0) {
-    const terms = vocabulary.slice(0, 35).join(', ')
-    parts.push(`Discussion about ${terms}.`)
-  }
-  const raw = parts.join(' ') || 'Meeting transcription.'
-  return raw.length <= WHISPER_PROMPT_MAX_CHARS ? raw : raw.slice(0, WHISPER_PROMPT_MAX_CHARS).trim()
-}
-
 export async function startRecording(
-  options: { sttModel: string; deviceId?: string; meetingTitle?: string; vocabulary?: string[] },
+  options: { sttModel: string; deviceId?: string; meetingTitle?: string; vocabulary?: string[]; sampleRate?: number },
   onTranscript: TranscriptCallback,
   onStatus?: StatusCallback
 ): Promise<boolean> {
   if (isRecording) return false
+
+  captureSampleRate = options.sampleRate ?? 16000
+  if (captureSampleRate !== 16000) {
+    console.log('[capture] Renderer sample rate is', captureSampleRate, 'Hz; resampling to 16 kHz for STT.')
+  }
+  droppedChunksByChannel = [0, 0]
+  hasNotifiedOverflow = false
 
   isRecording = true
   isPaused = false
@@ -86,8 +380,10 @@ export async function startRecording(
   autoPaused = false
   transcriptCallback = onTranscript
   statusCallback = onStatus || null
-  audioBuffers[0].length = 0
-  audioBuffers[1].length = 0
+  ringWriteIndex[0] = 0
+  ringWriteIndex[1] = 0
+  ringProcessedEndIndex[0] = 0
+  ringProcessedEndIndex[1] = 0
   recordingStartTime = Date.now()
   lastSpeechTime = Date.now()
   currentSTTModel = options.sttModel
@@ -125,15 +421,25 @@ export async function startRecording(
 
   consecutiveSilentChunks = 0
   currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
+  segmentState[0] = { startTime: 0, chunks: [], lastSpeechTime: 0 }
+  segmentState[1] = { startTime: 0, chunks: [], lastSpeechTime: 0 }
+  pendingSegments.length = 0
+
   if (!deferTranscription) {
+    segmentationTimer = setInterval(() => {
+      if (segmentationBusy || isPaused) return
+      segmentationBusy = true
+      runSegmentationLoop()
+        .then(() => processQueue())
+        .finally(() => { segmentationBusy = false })
+    }, SEG_TICK_MS)
+  } else {
     chunkTimer = setInterval(() => {
       if (isPaused || isProcessing) return
-      const hasData = audioBuffers[0].length > 0 || audioBuffers[1].length > 0
+      const hasData = ringUnprocessedLength(0) >= MIN_SAMPLES_PER_CHANNEL || ringUnprocessedLength(1) >= MIN_SAMPLES_PER_CHANNEL
       if (hasData) processBufferedAudio()
     }, currentChunkIntervalMs)
   }
-
-  // Silence-based auto-pause disabled — user triggers pause manually and uses "Generate summary" button
 
   return true
 }
@@ -149,14 +455,21 @@ export async function stopRecording(): Promise<{ duration: number } | null> {
     clearInterval(chunkTimer)
     chunkTimer = null
   }
-
+  if (segmentationTimer) {
+    clearInterval(segmentationTimer)
+    segmentationTimer = null
+  }
   if (silenceTimer) {
     clearInterval(silenceTimer)
     silenceTimer = null
   }
-  // silenceTimer no longer used (auto-pause disabled)
 
-  const hasData = (audioBuffers[0].length > 0 || audioBuffers[1].length > 0)
+  if (!deferTranscription && transcriptCallback) {
+    flushOpenSegments()
+    await drainQueue()
+  }
+
+  const hasData = ringUnprocessedLength(0) > 0 || ringUnprocessedLength(1) > 0
   if (deferTranscription && hasData && transcriptCallback) {
     statusCallback?.({ state: 'stt-processing' })
     await processBufferedAudio()
@@ -168,8 +481,6 @@ export async function stopRecording(): Promise<{ duration: number } | null> {
   transcriptCallback = null
   statusCallback = null
   const duration = Date.now() - recordingStartTime
-  audioBuffers[0].length = 0
-  audioBuffers[1].length = 0
 
   return { duration }
 }
@@ -205,14 +516,15 @@ export function processAudioChunk(pcmData: Float32Array, channel: number): boole
 
   if (isPaused) return false
 
-  audioBuffers[ch].push(pcmData)
+  let samples = pcmData
+  if (captureSampleRate !== SAMPLE_RATE) {
+    samples = resampleAudio(pcmData, captureSampleRate, SAMPLE_RATE)
+  }
+  ringPush(ch, samples)
 
-  // Near real-time: schedule STT as soon as we have enough audio (don't wait for next timer). Skip when transcribe-when-stopped.
-  if (!deferTranscription) {
-    const totalSamples = audioBuffers[ch].reduce((sum, c) => sum + c.length, 0)
-    if (!isProcessing && totalSamples >= MIN_SAMPLES_PER_CHANNEL) {
-      setImmediate(() => processBufferedAudio())
-    }
+  // When transcribe-when-stopped: schedule process as soon as we have enough (don't wait for timer).
+  if (deferTranscription && !isProcessing && ringUnprocessedLength(ch) >= MIN_SAMPLES_PER_CHANNEL) {
+    setImmediate(() => processBufferedAudio())
   }
 
   return true
@@ -223,23 +535,22 @@ async function processBufferedAudio(): Promise<void> {
   if (isProcessing) return
 
   for (const channel of [0, 1]) {
-    const chunks = audioBuffers[channel].splice(0)
-    if (chunks.length === 0) continue
+    const merged = ringTakeUnprocessed(channel, MIN_SAMPLES_PER_CHANNEL)
+    if (!merged) continue
 
-    const totalLength = chunks.reduce((sum, c) => sum + c.length, 0)
-    if (totalLength < MIN_SAMPLES_PER_CHANNEL) {
-      audioBuffers[channel].push(...chunks)
-      continue
-    }
-
+    const totalLength = merged.length
     isProcessing = true
     statusCallback?.({ state: 'stt-processing' })
 
-    const merged = new Float32Array(totalLength)
-    let offset = 0
-    for (const chunk of chunks) {
-      merged.set(chunk, offset)
-      offset += chunk.length
+    // Optional: noise gate before VAD (cuts samples below threshold to reduce background noise)
+    if (getSetting('audio-denoise-before-stt') === 'true') {
+      const thresholdStr = getSetting('audio-denoise-threshold')
+      const threshold = thresholdStr ? Math.max(0, Math.min(1, parseFloat(thresholdStr))) : 0.01
+      if (!Number.isNaN(threshold)) {
+        for (let i = 0; i < merged.length; i++) {
+          if (Math.abs(merged[i]) < threshold) merged[i] = 0
+        }
+      }
     }
 
     const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000)
@@ -328,11 +639,34 @@ async function processBufferedAudio(): Promise<void> {
       const filtered = filterHallucinatedTranscript(sttResult.text)
       if (filtered) {
         lastSpeechTime = Date.now()
-        transcriptCallback({
-          speaker,
-          time: formatTimestamp(chunkStartSec),
-          text: filtered,
-        })
+        const chunkDurationSec = totalLength / SAMPLE_RATE
+        const useDiarization = getSetting('use-diarization') === 'true' && channel === 0
+        if (useDiarization) {
+          try {
+            const diarSegments = await diarize(merged, SAMPLE_RATE)
+            const distinctSpeakers = [...new Set(diarSegments.map((s) => s.speaker))]
+            if (distinctSpeakers.length >= 2) {
+              const sentences = filtered.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean)
+              if (sentences.length > 0) {
+                sentences.forEach((sent, i) => {
+                  const relTime = (i / sentences.length) * chunkDurationSec
+                  const seg = diarSegments.find((d) => d.startTime <= relTime && relTime <= d.endTime)
+                  const label = seg?.speaker ?? distinctSpeakers[0]
+                  transcriptCallback!({ speaker: label, time: formatTimestamp(chunkStartSec + (i / sentences.length) * chunkDurationSec), text: sent })
+                })
+              } else {
+                transcriptCallback!({ speaker: distinctSpeakers[0], time: formatTimestamp(chunkStartSec), text: filtered })
+              }
+            } else {
+              transcriptCallback!({ speaker: speaker, time: formatTimestamp(chunkStartSec), text: filtered })
+            }
+          } catch (diarErr) {
+            console.warn('Diarization failed, using channel label:', diarErr)
+            transcriptCallback!({ speaker, time: formatTimestamp(chunkStartSec), text: filtered })
+          }
+        } else {
+          transcriptCallback!({ speaker, time: formatTimestamp(chunkStartSec), text: filtered })
+        }
       }
     } catch (err: any) {
       console.error('STT processing error:', err)
@@ -371,8 +705,8 @@ async function processBufferedAudio(): Promise<void> {
   }
 
   // Low-latency: if either channel still has enough samples, process again immediately
-  const hasMore0 = audioBuffers[0].reduce((s, c) => s + c.length, 0) >= MIN_SAMPLES_PER_CHANNEL
-  const hasMore1 = audioBuffers[1].reduce((s, c) => s + c.length, 0) >= MIN_SAMPLES_PER_CHANNEL
+  const hasMore0 = ringUnprocessedLength(0) >= MIN_SAMPLES_PER_CHANNEL
+  const hasMore1 = ringUnprocessedLength(1) >= MIN_SAMPLES_PER_CHANNEL
   if ((hasMore0 || hasMore1) && transcriptCallback) {
     setImmediate(() => processBufferedAudio())
   }
@@ -405,78 +739,6 @@ function formatTimestamp(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
   return `${m}:${String(s).padStart(2, '0')}`
-}
-
-/** Collapse repeated phrases to one occurrence so we keep content instead of dropping. */
-function collapseRepetitions(text: string): string {
-  let out = text.trim()
-  // Sentence-level: drop duplicate consecutive sentences (keep first)
-  const sentences = out.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean)
-  const seen = new Set<string>()
-  const kept: string[] = []
-  for (const s of sentences) {
-    const norm = s.toLowerCase()
-    if (norm && !seen.has(norm)) {
-      seen.add(norm)
-      kept.push(s)
-    }
-  }
-  out = kept.join(' ') || out
-  // Phrase repetition: same 10+ char phrase 3+ times → keep once
-  out = out.replace(/(.{10,}?)(\s+\1){2,}/g, '$1')
-  return out.trim()
-}
-
-/** Capitalize first letter of each sentence and " i " → " I ". */
-function normalizeSentenceCasing(text: string): string {
-  const segments = text.split(/(?<=[.!?])\s+|\n+/)
-  return segments
-    .map((seg) => {
-      const t = seg.trim()
-      if (!t) return t
-      const capped = t.charAt(0).toUpperCase() + t.slice(1)
-      return capped.replace(/\s+i\s+/g, ' I ')
-    })
-    .filter(Boolean)
-    .join(' ')
-}
-
-/** Filter known Whisper/STT hallucinations; collapse repetitions instead of dropping. */
-function filterHallucinatedTranscript(text: string): string | null {
-  const collapsed = collapseRepetitions(text)
-  if (!collapsed) return null
-
-  const lower = collapsed.toLowerCase()
-
-  const hallucinationPatterns = [
-    /thank\s+you\s+for\s+watching/i,
-    /thanks\s+for\s+watching/i,
-    /subscribe\s*(to\s+our\s+channel)?/i,
-    /like\s+and\s+subscribe/i,
-    /see\s+you\s+(in\s+the\s+)?next\s+/i,
-    /don't\s+forget\s+to\s+subscribe/i,
-    /hit\s+the\s+(bell|subscribe)\s+button/i,
-    /^\[music\]$/i, /^\[applause\]$/i, /^\[blank_audio\]$/i,
-    /^\(music\)$/i, /^\(applause\)$/i, /^\(laughter\)$/i,
-  ]
-  for (const pat of hallucinationPatterns) {
-    if (pat.test(lower)) return null
-  }
-
-  // Entire segment is only repeated short phrase (2–4 words 3+ times)
-  const words = collapsed.split(/\s+/)
-  if (words.length >= 6) {
-    for (let len = 2; len <= 4; len++) {
-      for (let i = 0; i <= words.length - len * 3; i++) {
-        const chunk = words.slice(i, i + len).join(' ').toLowerCase()
-        const next1 = words.slice(i + len, i + len * 2).join(' ').toLowerCase()
-        const next2 = words.slice(i + len * 2, i + len * 3).join(' ').toLowerCase()
-        if (chunk === next1 && chunk === next2) return null
-      }
-    }
-  }
-
-  return normalizeSentenceCasing(collapsed)
 }
 
 function pcmToWav(pcm: Float32Array, sampleRate: number): Buffer {

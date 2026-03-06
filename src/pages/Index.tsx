@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
-import { Sidebar, SidebarExpandTrigger, SidebarTopBarLeft, SidebarCollapseButton } from "@/components/Sidebar";
+import { Sidebar, SidebarTopBarLeft, SidebarCollapseButton } from "@/components/Sidebar";
 import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { isElectron } from "@/lib/electron-api";
 import { NoteCardMenu } from "@/components/NoteCardMenu";
@@ -23,7 +23,15 @@ const Index = () => {
   const { sidebarOpen } = useSidebarVisibility();
   const { folders } = useFolders();
   const { notes, deleteNote, updateNoteFolder } = useNotes();
-  const { activeSession } = useRecording();
+  const { activeSession, clearSession } = useRecording();
+
+  const handleDeleteNote = useCallback(
+    (id: string) => {
+      deleteNote(id);
+      if (activeSession?.noteId === id) clearSession();
+    },
+    [deleteNote, activeSession?.noteId, clearSession]
+  );
   const { events, icsSource } = useCalendar();
   const [icsOpen, setIcsOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -92,12 +100,10 @@ const Index = () => {
   if (activeFolder) {
     return (
       <div className="flex h-screen overflow-hidden bg-background">
-        {sidebarOpen ? (
+        {sidebarOpen && (
           <div className="w-56 flex-shrink-0 overflow-hidden">
             <Sidebar />
           </div>
-        ) : (
-          <SidebarExpandTrigger />
         )}
         <main className={cn("flex flex-1 flex-col min-w-0 relative", !sidebarOpen && isElectron && "pl-20")}>
           <div className="flex-1 overflow-y-auto pb-24">
@@ -143,7 +149,7 @@ const Index = () => {
                       <NoteCardMenu
                         noteId={n.id}
                         currentFolderId={n.folderId}
-                        onDelete={deleteNote}
+                        onDelete={handleDeleteNote}
                         onMoveToFolder={updateNoteFolder}
                       />
                     </div>
@@ -163,12 +169,10 @@ const Index = () => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {sidebarOpen ? (
+      {sidebarOpen && (
         <div className="w-56 flex-shrink-0 overflow-hidden">
           <Sidebar />
         </div>
-      ) : (
-        <SidebarExpandTrigger />
       )}
       <main className={cn("flex flex-1 flex-col min-w-0 relative", !sidebarOpen && isElectron && "pl-20")}>
         <div className="flex items-center justify-between px-4 pt-3 pb-0">
@@ -323,7 +327,7 @@ const Index = () => {
                           <NoteCardMenu
                             noteId={n.id}
                             currentFolderId={n.folderId}
-                            onDelete={deleteNote}
+                            onDelete={handleDeleteNote}
                             onMoveToFolder={updateNoteFolder}
                           />
                         </div>

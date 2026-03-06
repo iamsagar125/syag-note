@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Sidebar, SidebarExpandTrigger, SidebarTopBarLeft } from "@/components/Sidebar";
+import { Sidebar, SidebarTopBarLeft } from "@/components/Sidebar";
 import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { AskBar } from "@/components/AskBar";
 import { EditableSummary } from "@/components/EditableSummary";
@@ -204,12 +204,10 @@ export default function NoteDetailPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {sidebarOpen ? (
+      {sidebarOpen && (
         <div className="w-56 flex-shrink-0 overflow-hidden">
           <Sidebar />
         </div>
-      ) : (
-        <SidebarExpandTrigger />
       )}
       <main className="flex flex-1 flex-col min-w-0">
         <div className={cn(

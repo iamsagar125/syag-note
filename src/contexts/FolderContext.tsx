@@ -11,6 +11,7 @@ export interface Folder {
 interface FolderContextType {
   folders: Folder[];
   createFolder: (name: string) => Folder;
+  getOrCreateFolderByName: (name: string) => Folder;
   deleteFolder: (id: string) => void;
   renameFolder: (id: string, name: string) => void;
   noteFolders: Record<string, string>;
@@ -74,6 +75,14 @@ export function FolderProvider({ children }: { children: ReactNode }) {
     return folder;
   };
 
+  const getOrCreateFolderByName = (name: string): Folder => {
+    const trimmed = (name || "").trim();
+    const key = trimmed.toLowerCase();
+    const existing = folders.find((f) => f.name.toLowerCase() === key);
+    if (existing) return existing;
+    return createFolder(trimmed || "Meetings");
+  };
+
   const deleteFolder = (id: string) => {
     setFolders((prev) => prev.filter((f) => f.id !== id));
     setNoteFolders((prev) => {
@@ -110,7 +119,7 @@ export function FolderProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <FolderContext.Provider value={{ folders, createFolder, deleteFolder, renameFolder, noteFolders, addNoteToFolder, removeNoteFromFolder, getNotesInFolder }}>
+    <FolderContext.Provider value={{ folders, createFolder, getOrCreateFolderByName, deleteFolder, renameFolder, noteFolders, addNoteToFolder, removeNoteFromFolder, getNotesInFolder }}>
       {children}
     </FolderContext.Provider>
   );

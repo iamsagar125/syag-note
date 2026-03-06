@@ -124,6 +124,10 @@ export function downloadModel(modelId: string, onProgress: ProgressCallback): Pr
     controller.signal
   )
     .then(() => {
+      ensureModelsDir()
+      if (!existsSync(tempPath)) {
+        throw new Error(`Download incomplete: temp file missing. Try again.`)
+      }
       renameSync(tempPath, destPath)
       activeDownloads.delete(modelId)
     })

@@ -184,6 +184,14 @@ async function checkForMeetings(): Promise<void> {
 
       console.log(`[MeetingDetector] Meeting detected: ${meetingTitle}`)
 
+      const autoRecord = getSetting('auto-record') !== 'false'
+      if (!autoRecord) {
+        activeMeetingApp = matchedApp
+        lastPollHadMeetingApp = true
+        isChecking = false
+        return
+      }
+
       const detectionData = {
         app: matchedApp,
         title: meetingTitle,

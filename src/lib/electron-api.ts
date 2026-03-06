@@ -1,7 +1,9 @@
+type TranscriptWord = { word: string; start: number; end: number }
 type TranscriptChunk = {
   speaker: string
   time: string
   text: string
+  words?: TranscriptWord[]
 }
 
 type DownloadProgress = {
@@ -50,7 +52,7 @@ type ElectronAPI = {
     installTheStageWhisper: () => Promise<boolean>
   }
   recording: {
-    start: (options: { sttModel: string; deviceId?: string; meetingTitle?: string; vocabulary?: string[] }) => Promise<boolean>
+    start: (options: { sttModel: string; deviceId?: string; meetingTitle?: string; vocabulary?: string[]; sampleRate?: number }) => Promise<boolean>
     stop: () => Promise<any>
     pause: () => Promise<boolean>
     resume: (options?: { sttModel?: string }) => Promise<boolean>
@@ -85,6 +87,8 @@ type ElectronAPI = {
   app: {
     getVersion: () => Promise<string>
     getPlatform: () => string
+    /** Fetch URL from main process (bypasses CORS for calendar ICS). */
+    fetchUrl?: (url: string) => Promise<{ ok: boolean; status: number; body: string }>
     isAppleFoundationAvailable?: () => Promise<boolean>
     setLoginItem?: (enabled: boolean) => Promise<boolean>
     onTrayStartRecording: (callback: () => void) => () => void

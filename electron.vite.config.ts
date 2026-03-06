@@ -7,6 +7,11 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({
       include: ['node-llama-cpp']
     })],
+    resolve: {
+      alias: {
+        '@': resolve(__dirname, 'src')
+      }
+    },
     build: {
       rollupOptions: {
         input: {
