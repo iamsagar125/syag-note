@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
@@ -11,85 +11,7 @@ interface RecordingSession {
 }
 
 /** Transcript line: speaker is "You" (user/mic) or "Others" (system/remote). UI shows "Me" / "Them". */
-export type TranscriptLine = { speaker: string; time: string; text: string };
-
-/** Word with absolute start/end (seconds) and speaker for stable/tail merge. */
-type TranscriptWord = { word: string; start: number; end: number; speaker: string };
-
-const TAIL_WINDOW_SEC = 10
-const OVERLAP_DEDUPE_SEC = 1
-const TIME_EPSILON = 0.05
-
-/** Parse "m:ss" to seconds. */
-function parseTimeToSeconds(timeStr: string): number {
-  const parts = timeStr.trim().split(":").map((p) => parseInt(p, 10))
-  if (parts.length >= 2) return (parts[0] || 0) * 60 + (parts[1] || 0)
-  return parts[0] || 0
-}
-
-/** Convert stable + tail words into display lines (group by speaker, break on gap). Returns lines and each line's time range for removal. */
-function wordsToLinesWithRanges(
-  stable: TranscriptWord[],
-  tail: TranscriptWord[]
-): { lines: TranscriptLine[]; ranges: { start: number; end: number }[] } {
-  const all = [...stable, ...tail].sort((a, b) => a.start - b.start)
-  if (all.length === 0) return { lines: [], ranges: [] }
-  const lines: TranscriptLine[] = []
-  const ranges: { start: number; end: number }[] = []
-  let lineSpeaker = all[0].speaker
-  let lineStart = all[0].start
-  let lineEnd = all[0].end
-  let lineWords: string[] = [all[0].word]
-  for (let i = 1; i < all.length; i++) {
-    const w = all[i]
-    const prev = all[i - 1]
-    const gap = w.start - prev.end
-    if (w.speaker !== lineSpeaker || gap > 2) {
-      const m = Math.floor(lineStart / 60)
-      const s = Math.floor(lineStart % 60)
-      lines.push({
-        speaker: lineSpeaker,
-        time: `${m}:${String(s).padStart(2, "0")}`,
-        text: lineWords.join(" ").trim(),
-      })
-      ranges.push({ start: lineStart, end: lineEnd })
-      lineSpeaker = w.speaker
-      lineStart = w.start
-      lineEnd = w.end
-      lineWords = [w.word]
-    } else {
-      lineWords.push(w.word)
-      lineEnd = w.end
-    }
-  }
-  const m = Math.floor(lineStart / 60)
-  const s = Math.floor(lineStart % 60)
-  lines.push({
-    speaker: lineSpeaker,
-    time: `${m}:${String(s).padStart(2, "0")}`,
-    text: lineWords.join(" ").trim(),
-  })
-  ranges.push({ start: lineStart, end: lineEnd })
-  return { lines, ranges }
-}
-
-function wordsToLines(stable: TranscriptWord[], tail: TranscriptWord[]): TranscriptLine[] {
-  return wordsToLinesWithRanges(stable, tail).lines
-}
-
-/** Merge new segment into tail: in overlap zone prefer later (new) segment's words. */
-function mergeTailWithNew(
-  tail: TranscriptWord[],
-  newWords: TranscriptWord[],
-  overlapSec: number
-): TranscriptWord[] {
-  if (tail.length === 0) return [...newWords]
-  if (newWords.length === 0) return tail
-  const tailEnd = Math.max(...tail.map((w) => w.end))
-  const overlapStart = Math.max(tailEnd - overlapSec, 0)
-  const tailBeforeOverlap = tail.filter((w) => w.end <= overlapStart)
-  return [...tailBeforeOverlap, ...newWords].sort((a, b) => a.start - b.start)
-}
+type TranscriptLine = { speaker: string; time: string; text: string };
 
 export const CAPTURE_ERROR_NO_SOURCE =
   'No microphone or system audio. Allow microphone access in System Settings (Privacy & Security → Microphone) and optionally Screen Recording for system audio.';
@@ -118,8 +40,6 @@ interface RecordingContextType {
   sttErrorMessage: string | null;
   /** Timestamp of last successful transcript chunk (for stale hint). */
   lastSuccessfulTranscriptTime: number | null;
-  /** True when system (desktop/window) audio was successfully captured; false when mic-only. */
-  systemAudioActive: boolean;
   startAudioCapture: (sttModel: string, options?: { meetingTitle?: string; vocabulary?: string[] }) => Promise<void>;
   stopAudioCapture: () => Promise<void>;
   pauseAudioCapture: () => Promise<void>;
@@ -133,16 +53,8 @@ const RecordingContext = createContext<RecordingContextType | undefined>(undefin
 
 export function RecordingProvider({ children }: { children: ReactNode }) {
   const [activeSession, setActiveSession] = useState<RecordingSession | null>(null);
-  const [transcriptState, setTranscriptState] = useState<{ stable: TranscriptWord[]; tail: TranscriptWord[] }>({
-    stable: [],
-    tail: [],
-  });
-  const transcriptLines = useMemo(
-    () => wordsToLines(transcriptState.stable, transcriptState.tail),
-    [transcriptState.stable, transcriptState.tail]
-  );
+  const [transcriptLines, setTranscriptLines] = useState<TranscriptLine[]>([]);
   const [isCapturing, setIsCapturing] = useState(false);
-  const [systemAudioActive, setSystemAudioActive] = useState(false);
   const [usingWebSpeech, setUsingWebSpeech] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [sttStatus, setSttStatus] = useState<'idle' | 'processing' | 'error'>('idle');
@@ -174,20 +86,20 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       } else {
         setLastSuccessfulTranscriptTime(Date.now());
       }
-      const words: TranscriptWord[] =
-        chunk.words?.length ?
-          chunk.words.map((w) => ({ word: w.word, start: w.start, end: w.end, speaker: chunk.speaker }))
-        : [{ word: chunk.text, start: parseTimeToSeconds(chunk.time), end: parseTimeToSeconds(chunk.time), speaker: chunk.speaker }];
-      setTranscriptState((prev) => {
-        const newTail = mergeTailWithNew(prev.tail, words, OVERLAP_DEDUPE_SEC);
-        const latest = newTail.length ? Math.max(...newTail.map((w) => w.end)) : 0;
-        const tailCut = latest - TAIL_WINDOW_SEC;
-        const toStable = newTail.filter((w) => w.end < tailCut);
-        const newTailFiltered = newTail.filter((w) => w.end >= tailCut);
-        return {
-          stable: [...prev.stable, ...toStable],
-          tail: newTailFiltered,
-        };
+      setTranscriptLines((prev) => [...prev, chunk]);
+    });
+
+    // LLM post-processing: replace raw transcript line with corrected version
+    const cleanupCorrected = api.recording.onCorrectedTranscript?.((corrected) => {
+      setTranscriptLines((prev) => {
+        // Find the matching line by time + speaker + original text
+        const idx = prev.findIndex(
+          (l) => l.time === corrected.time && l.speaker === corrected.speaker && l.text === corrected.originalText
+        );
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], text: corrected.text };
+        return updated;
       });
     });
 
@@ -209,37 +121,19 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
     cleanupRef.current = cleanupTranscript;
 
-    return () => { cleanupTranscript(); cleanupStatus(); };
+    return () => { cleanupTranscript(); cleanupCorrected?.(); cleanupStatus(); };
   }, []);
 
   const removeTranscriptLineAt = useCallback((index: number) => {
-    setTranscriptState((prev) => {
-      const { ranges } = wordsToLinesWithRanges(prev.stable, prev.tail);
-      if (index < 0 || index >= ranges.length) return prev;
-      const r = ranges[index];
-      const inRange = (w: TranscriptWord) =>
-        w.start >= r.start - TIME_EPSILON && w.end <= r.end + TIME_EPSILON;
-      return {
-        stable: prev.stable.filter((w) => !inRange(w)),
-        tail: prev.tail.filter((w) => !inRange(w)),
-      };
+    setTranscriptLines((prev) => {
+      if (index < 0 || index >= prev.length) return prev;
+      return prev.filter((_, i) => i !== index);
     });
   }, []);
 
   const removeTranscriptLinesAt = useCallback((indices: number[]) => {
-    const indexSet = new Set(indices);
-    setTranscriptState((prev) => {
-      const { ranges } = wordsToLinesWithRanges(prev.stable, prev.tail);
-      const toRemove = new Set(indices.filter((i) => i >= 0 && i < ranges.length).map((i) => ranges[i]));
-      const inAnyRange = (w: TranscriptWord) =>
-        [...toRemove].some(
-          (r) => w.start >= r.start - TIME_EPSILON && w.end <= r.end + TIME_EPSILON
-        );
-      return {
-        stable: prev.stable.filter((w) => !inAnyRange(w)),
-        tail: prev.tail.filter((w) => !inAnyRange(w)),
-      };
-    });
+    const set = new Set(indices);
+    setTranscriptLines((prev) => prev.filter((_, i) => !set.has(i)));
   }, []);
 
   // Global elapsed timer -- ticks regardless of which page is mounted
@@ -257,7 +151,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   const startSession = useCallback((noteId: string) => {
     const now = Date.now();
     setActiveSession({ noteId, title: "New note", elapsedSeconds: 0, isRecording: true, startTime: now });
-    setTranscriptState({ stable: [], tail: [] });
+    setTranscriptLines([]);
     // Inform tray about meeting info
     if (api) {
       api.app.updateTrayMeetingInfo?.({ title: "New note", startTime: now });
@@ -377,19 +271,14 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     } catch {}
 
     try {
-      const audioCtx = new AudioContext({ sampleRate: 16000 });
-      audioContextRef.current = audioCtx;
-      const actualSampleRate = audioCtx.sampleRate;
-      if (actualSampleRate !== 16000) {
-        console.warn('[Recording] AudioContext sample rate is', actualSampleRate, 'Hz (requested 16000); main will resample for STT.')
-      }
-
       await api.recording.start({
         sttModel: sttModel || '',
         meetingTitle: options?.meetingTitle,
         vocabulary: options?.vocabulary,
-        sampleRate: actualSampleRate,
       });
+
+      const audioCtx = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioCtx;
 
       const workletCandidates = isElectron
         ? [
@@ -426,26 +315,15 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         }
       };
 
-      // 1. Capture microphone audio (use user-selected device if set; fallback if exact device fails)
+      // 1. Capture microphone audio (use user-selected device if set)
       try {
-        const noiseSuppression = api ? (await api.db.settings.get('audio-noise-suppression')) !== 'false' : true;
-        const baseConstraints: MediaTrackConstraints = {
-          sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression,
+        const audioConstraints: MediaTrackConstraints = {
+          sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true,
         };
-        let micStream: MediaStream | null = null;
         if (preferredDeviceId) {
-          try {
-            micStream = await navigator.mediaDevices.getUserMedia({
-              audio: { ...baseConstraints, deviceId: { exact: preferredDeviceId } },
-            });
-          } catch {
-            console.warn('Preferred audio device unavailable; falling back to default. Clearing stored device.');
-            if (api) api.db.settings.set('audio-input-device', '').catch(() => {});
-          }
+          audioConstraints.deviceId = { exact: preferredDeviceId };
         }
-        if (!micStream) {
-          micStream = await navigator.mediaDevices.getUserMedia({ audio: baseConstraints });
-        }
+        const micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
         micStreamRef.current = micStream;
         const micSource = audioCtx.createMediaStreamSource(micStream);
         micSource.connect(merger, 0, 0);
@@ -453,25 +331,19 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         console.warn('Microphone access denied or unavailable:', micErr);
       }
 
-      // 2. Capture system audio via desktopCapturer (explicit source so capture is reliable)
-      setSystemAudioActive(false);
+      // 2. Capture system audio via desktopCapturer
       try {
         const sources = await api.audio.getDesktopSources();
         if (sources.length > 0) {
-          // Prefer first screen so "Entire Screen" is default; otherwise first window
-          const screenFirst = sources.find((s) => s.id.startsWith('screen:'));
-          const source = screenFirst ?? sources[0];
           const systemStream = await (navigator.mediaDevices as any).getUserMedia({
             audio: {
               mandatory: {
                 chromeMediaSource: 'desktop',
-                chromeMediaSourceId: source.id,
               }
             },
             video: {
               mandatory: {
                 chromeMediaSource: 'desktop',
-                chromeMediaSourceId: source.id,
                 minWidth: 1,
                 maxWidth: 1,
                 minHeight: 1,
@@ -485,7 +357,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
           systemStreamRef.current = systemStream;
           const systemSource = audioCtx.createMediaStreamSource(systemStream);
           systemSource.connect(merger, 0, 1);
-          setSystemAudioActive(true);
         }
       } catch (sysErr) {
         console.warn('System audio capture not available (screen recording permission may be needed):', sysErr);
@@ -540,7 +411,6 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const stopAudioCapture = useCallback(async () => {
     setIsCapturing(false);
-    setSystemAudioActive(false);
     stopSpeechRecognition();
 
     if (workletNodeRef.current) {
@@ -576,7 +446,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
   return (
     <RecordingContext.Provider value={{
       activeSession, isActive, startSession, resumeSession, updateSession, clearSession,
-      transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, systemAudioActive, usingWebSpeech, captureError, clearCaptureError,
+      transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, usingWebSpeech, captureError, clearCaptureError,
       sttStatus, sttErrorMessage, lastSuccessfulTranscriptTime,
       startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture,
       setSessionScratch, getSessionScratch

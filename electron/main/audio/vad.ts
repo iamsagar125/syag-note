@@ -1,14 +1,26 @@
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { getModelsDir, downloadModel } from '../models/manager'
-import { probsToSegments, type VADSegment } from '@/lib/vad-segments'
-
-export type { VADSegment } from '@/lib/vad-segments'
 
 let ortSession: any = null
 let ortLoaded = false
 
+export interface VADSegment {
+  start: number
+  end: number
+}
+
+// Tuned for meetings: lower threshold catches quieter speakers, longer silence avoids splitting mid-thought
+const VAD_THRESHOLD_DEFAULT = 0.45
+const MIN_SPEECH_DURATION_DEFAULT = 0.25
+const MIN_SILENCE_DURATION_DEFAULT = 0.5
 const WINDOW_SIZE_SAMPLES = 512
+
+export interface VADOptions {
+  threshold?: number
+  minSpeechDuration?: number
+  minSilenceDuration?: number
+}
 
 function getVADModelPath(): string {
   return join(getModelsDir(), 'silero_vad.onnx')
@@ -46,7 +58,7 @@ async function getORTSession(): Promise<any> {
   return ortSession
 }
 
-export async function runVAD(audio: Float32Array, sampleRate: number): Promise<VADSegment[]> {
+export async function runVAD(audio: Float32Array, sampleRate: number, options?: VADOptions): Promise<VADSegment[]> {
   let session: any
   try {
     session = await getORTSession()
@@ -95,5 +107,58 @@ export async function runVAD(audio: Float32Array, sampleRate: number): Promise<V
     }
   }
 
-  return probsToSegments(speechProbs, WINDOW_SIZE_SAMPLES / 16000)
+  const threshold = options?.threshold ?? VAD_THRESHOLD_DEFAULT
+  const minSpeech = options?.minSpeechDuration ?? MIN_SPEECH_DURATION_DEFAULT
+  const minSilence = options?.minSilenceDuration ?? MIN_SILENCE_DURATION_DEFAULT
+
+  return probsToSegments(speechProbs, WINDOW_SIZE_SAMPLES / 16000, threshold, minSpeech, minSilence)
+}
+
+function probsToSegments(probs: number[], frameDuration: number, threshold: number, minSpeechDuration: number, minSilenceDuration: number): VADSegment[] {
+  const segments: VADSegment[] = []
+  let inSpeech = false
+  let speechStart = 0
+  let silenceStart = 0
+
+  for (let i = 0; i < probs.length; i++) {
+    const time = i * frameDuration
+
+    if (probs[i] >= threshold) {
+      if (!inSpeech) {
+        speechStart = time
+        inSpeech = true
+      }
+      silenceStart = time + frameDuration
+    } else {
+      if (inSpeech) {
+        const silenceDuration = time - silenceStart
+        if (silenceDuration >= minSilenceDuration) {
+          const speechDuration = silenceStart - speechStart
+          if (speechDuration >= minSpeechDuration) {
+            segments.push({ start: speechStart, end: silenceStart })
+          }
+          inSpeech = false
+        }
+      }
+    }
+  }
+
+  if (inSpeech) {
+    const endTime = probs.length * frameDuration
+    if (endTime - speechStart >= minSpeechDuration) {
+      segments.push({ start: speechStart, end: endTime })
+    }
+  }
+
+  // Merge segments that are close together
+  const merged: VADSegment[] = []
+  for (const seg of segments) {
+    if (merged.length > 0 && seg.start - merged[merged.length - 1].end < 0.5) {
+      merged[merged.length - 1].end = seg.end
+    } else {
+      merged.push({ ...seg })
+    }
+  }
+
+  return merged
 }

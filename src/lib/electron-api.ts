@@ -48,8 +48,6 @@ type ElectronAPI = {
     installMLXWhisper8Bit: () => Promise<boolean>
     checkFfmpeg: () => Promise<boolean>
     installFfmpeg: () => Promise<boolean>
-    checkTheStageWhisper: () => Promise<boolean>
-    installTheStageWhisper: () => Promise<boolean>
   }
   recording: {
     start: (options: { sttModel: string; deviceId?: string; meetingTitle?: string; vocabulary?: string[]; sampleRate?: number }) => Promise<boolean>
@@ -59,6 +57,7 @@ type ElectronAPI = {
     sendAudioChunk: (pcmData: Float32Array, channel?: number) => Promise<boolean>
     onTranscriptChunk: (callback: (chunk: TranscriptChunk) => void) => () => void
     onRecordingStatus: (callback: (status: { state: string; error?: string }) => void) => () => void
+    onCorrectedTranscript?: (callback: (chunk: TranscriptChunk & { originalText: string }) => void) => () => void
   }
   llm: {
     summarize: (data: { transcript: any[]; personalNotes: string; model: string; meetingTemplateId?: string; customPrompt?: string; meetingTitle?: string; meetingDuration?: string | null; attendees?: string[] }) => Promise<any>

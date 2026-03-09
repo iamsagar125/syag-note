@@ -58,8 +58,6 @@ const electronAPI = {
     installMLXWhisper8Bit: () => ipcRenderer.invoke('models:install-mlx-whisper-8bit'),
     checkFfmpeg: () => ipcRenderer.invoke('models:check-ffmpeg'),
     installFfmpeg: () => ipcRenderer.invoke('models:install-ffmpeg'),
-    checkTheStageWhisper: () => ipcRenderer.invoke('models:check-thestage-whisper'),
-    installTheStageWhisper: () => ipcRenderer.invoke('models:install-thestage-whisper'),
   },
 
   recording: {
@@ -79,6 +77,11 @@ const electronAPI = {
       const handler = (_event: any, status: any) => callback(status)
       ipcRenderer.on('recording:status', handler)
       return () => ipcRenderer.removeListener('recording:status', handler)
+    },
+    onCorrectedTranscript: (callback: (chunk: TranscriptChunk & { originalText: string }) => void) => {
+      const handler = (_event: any, chunk: any) => callback(chunk)
+      ipcRenderer.on('recording:transcript-corrected', handler)
+      return () => ipcRenderer.removeListener('recording:transcript-corrected', handler)
     },
   },
 

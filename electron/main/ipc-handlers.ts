@@ -13,8 +13,6 @@ import { chat, testCopartConnection, listCopartGenieModels } from './cloud/route
 import { checkAppleFoundationAvailable } from './cloud/apple-llm'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
-import https from 'https'
-import http from 'http'
 
 const keychainPath = () => {
   const dir = join(app.getPath('userData'), 'secure')
@@ -62,7 +60,7 @@ export function registerIPCHandlers(): void {
   ipcMain.handle('db:settings-get-all', () => getAllSettings())
 
   // --- Models ---
-  const WHISPER_CPP_MODEL_IDS = ['whisper-large-v3-turbo', 'whisper-large-v3', 'whisper-medium', 'whisper-small', 'whisper-tiny']
+  const WHISPER_CPP_MODEL_IDS = ['whisper-large-v3-turbo']
   ipcMain.handle('models:download', async (_e, modelId: string) => {
     const sender = _e.sender
     try {
@@ -109,14 +107,6 @@ export function registerIPCHandlers(): void {
     const { installFfmpeg } = await import('./models/stt-engine')
     return installFfmpeg()
   })
-  ipcMain.handle('models:check-thestage-whisper', async () => {
-    const { checkTheStageWhisperAvailable } = await import('./models/stt-engine')
-    return checkTheStageWhisperAvailable()
-  })
-  ipcMain.handle('models:install-thestage-whisper', async () => {
-    const { installTheStageWhisper } = await import('./models/stt-engine')
-    return installTheStageWhisper()
-  })
   // --- Tray / Meeting ---
   ipcMain.handle('tray:update-recording', (_e, isRecording: boolean) => {
     updateTrayRecordingState(isRecording)
@@ -137,7 +127,8 @@ export function registerIPCHandlers(): void {
     return startRecording(
       options,
       (chunk) => { sender.send('recording:transcript-chunk', chunk) },
-      (status) => { sender.send('recording:status', status) }
+      (status) => { sender.send('recording:status', status) },
+      (corrected) => { sender.send('recording:transcript-corrected', corrected) }
     )
   })
   ipcMain.handle('recording:stop', async () => { updateTrayRecordingState(false); return stopRecording() })
@@ -183,7 +174,7 @@ export function registerIPCHandlers(): void {
   })
   ipcMain.handle('audio:get-desktop-sources', async () => {
     const sources = await desktopCapturer.getSources({
-      types: ['screen', 'window'],
+      types: ['screen'],
       thumbnailSize: { width: 0, height: 0 }
     })
     return sources.map(s => ({ id: s.id, name: s.name }))
@@ -238,45 +229,6 @@ export function registerIPCHandlers(): void {
   // --- Copart Genie test ---
   ipcMain.handle('copart:test', () => testCopartConnection())
   ipcMain.handle('copart:listModels', () => listCopartGenieModels())
-
-  // --- Fetch URL (bypass CORS for calendar ICS from Outlook/Google when renderer origin is app://) ---
-  ipcMain.handle('fetch:url', (_, urlStr: string): Promise<{ ok: boolean; status: number; body: string }> => {
-    return new Promise((resolve) => {
-      function doFetch(targetUrl: string, redirectCount: number) {
-        try {
-          const u = new URL(targetUrl)
-          if (u.protocol !== 'https:' && u.protocol !== 'http:') {
-            resolve({ ok: false, status: 0, body: '' })
-            return
-          }
-          if (redirectCount > 5) {
-            resolve({ ok: false, status: 0, body: '' })
-            return
-          }
-          const lib = u.protocol === 'https:' ? https : http
-          const req = lib.get(targetUrl, { timeout: 15000 }, (res) => {
-            const code = res.statusCode ?? 0
-            if (code >= 301 && code <= 308 && res.headers.location) {
-              const next = new URL(res.headers.location, targetUrl).toString()
-              doFetch(next, redirectCount + 1)
-              return
-            }
-            const chunks: Buffer[] = []
-            res.on('data', (chunk: Buffer) => chunks.push(chunk))
-            res.on('end', () => {
-              const body = Buffer.concat(chunks).toString('utf-8')
-              resolve({ ok: code >= 200 && code < 300, status: code, body })
-            })
-          })
-          req.on('error', () => resolve({ ok: false, status: 0, body: '' }))
-          req.on('timeout', () => { req.destroy(); resolve({ ok: false, status: 0, body: '' }) })
-        } catch {
-          resolve({ ok: false, status: 0, body: '' })
-        }
-      }
-      doFetch(urlStr, 0)
-    })
-  })
 
   // --- App ---
   ipcMain.handle('app:get-version', () => app.getVersion())

@@ -8,24 +8,8 @@ const MODEL_URLS: Record<string, { url: string; filename: string }> = {
     url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin',
     filename: 'ggml-large-v3-turbo.bin',
   },
-  'whisper-large-v3': {
-    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin',
-    filename: 'ggml-large-v3.bin',
-  },
-  'whisper-medium': {
-    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin',
-    filename: 'ggml-medium.bin',
-  },
-  'whisper-small': {
-    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
-    filename: 'ggml-small.bin',
-  },
-  'whisper-tiny': {
-    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
-    filename: 'ggml-tiny.bin',
-  },
   'silero-vad': {
-    url: 'https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx',
+    url: 'https://huggingface.co/freddyaboulton/silero-vad/resolve/main/silero_vad.onnx',
     filename: 'silero_vad.onnx',
   },
   'ecapa-tdnn': {

@@ -72,16 +72,17 @@ AI-powered meeting notes and audio transcription for macOS. Record meetings with
 
 | Step | Where | What |
 |------|--------|------|
-| 1. Capture | Renderer | **RecordingContext** starts capture: get mic + (optional) system audio via `getUserMedia` + `getDisplayMedia`, create AudioContext, load **AudioWorklet** `public/audio-processor.js`. |
+| 1. Capture | Renderer | **RecordingContext** starts capture: get mic + (optional) system audio via `getUserMedia` + desktop capture with `chromeMediaSourceId`, create AudioContext (16 kHz), load **AudioWorklet** `public/audio-processor.js`. |
 | 2. Worklet | `public/audio-processor.js` | **SyagAudioProcessor**: buffers two channels (0 = mic, 1 = system), emits `audio-chunk` with `pcm` (Float32Array) and `channel`. Chunk size 4096 samples. |
 | 3. To main | Preload + IPC | `recording:audio-chunk` (pcm, channel) → **processAudioChunk** in main. |
-| 4. Buffers | `audio/capture.ts` | **audioBuffers[0]** (You), **audioBuffers[1]** (Others). Per-channel buffers; **processBufferedAudio** runs on timer (4s active, 15s idle) or when a channel has ≥ 2s of samples (setImmediate). |
-| 5. Process | `audio/capture.ts` | Merge chunks per channel, optional VAD (silero), build WAV, call STT. **currentSTTModel** from `recording:start` options (e.g. `deepgram:Nova-2` or `local:mlx-whisper-large-v3-turbo`). |
-| 6. STT local | `models/stt-engine.ts` | **processWithLocalSTT**: MLX Whisper (Python worker) or whisper.cpp CLI + downloaded ggml model. WAV written to temp file, result parsed. |
-| 7. STT cloud | `cloud/router.ts` → `cloud/deepgram.ts` (etc.) | **routeSTT(wavBuffer, model)** → getApiKey(providerId) from keychain → **sttDeepgram** (or OpenAI, AssemblyAI, Groq). |
-| 8. Transcript | `capture.ts` | **transcriptCallback** with `{ speaker: 'You'|'Others', time, text }` → IPC `recording:transcript-chunk` → renderer appends to transcript lines. |
+| 4. Ring buffer | `audio/capture.ts` | Per-channel **ring buffers** (15 s at 16 kHz); samples are pushed with **ringPush**; buffer is never drained. Overflow is tracked and can surface a “buffer overflow” status. |
+| 5. Segmentation | `audio/capture.ts` | **runSegmentationLoop** runs every **250 ms** (active) / **15 s** (idle): VAD on last 10 s window; segment closes on **0.7 s silence** or **max segment length** (default 10 s, configurable in Settings). **0.75 s overlap** with next segment. Min segment 2 s (1.5 s for channel 1). |
+| 6. Process | `audio/capture.ts` | Closed segment (PCM + overlap) → WAV → STT. **currentSTTModel** from `recording:start` (e.g. `deepgram:Nova-2`, `groq:whisper-large-v3`, `local:mlx-whisper-large-v3-turbo`). Optional **defer path**: transcribe once when recording stops (Settings: “Transcribe when recording stops”). |
+| 7. STT local | `models/stt-engine.ts` | **processWithLocalSTT**: MLX Whisper (Python worker) or whisper.cpp CLI + downloaded ggml model. WAV to temp file; result may include word timestamps. |
+| 8. STT cloud | `cloud/router.ts` → `cloud/*.ts` | **routeSTT(wavBuffer, model)** → getApiKey(providerId) from keychain → Deepgram, Groq, OpenAI, AssemblyAI. |
+| 9. Transcript | `capture.ts` | **filterHallucinatedTranscript** (per segment) → **transcriptCallback** `{ speaker, time, text, words? }` → IPC `recording:transcript-chunk` → renderer (stable prefix + live tail when supported). |
 
-Constants: `SAMPLE_RATE = 16000`, `MIN_SAMPLES_PER_CHANNEL = 2s`, `CHUNK_INTERVAL_ACTIVE_MS = 4000`, `CHUNK_INTERVAL_IDLE_MS = 15000`. Speaker labels: channel 0 → “You”, channel 1 → “Others”.
+Constants: `SAMPLE_RATE = 16000`, `RING_DURATION_SEC = 15`, `CHUNK_INTERVAL_ACTIVE_MS = 2500`, `CHUNK_INTERVAL_IDLE_MS = 15000`, `MIN_SEG_LEN_SEC = 2`, `SILENCE_THRESHOLD_SEC = 0.7`, `MAX_SEG_LEN_SEC = 10` (configurable), `OVERLAP_SEC = 0.75`. Speaker labels: channel 0 → “You”, channel 1 → “Others”.
 
 ---
 
@@ -102,10 +103,10 @@ Constants: `SAMPLE_RATE = 16000`, `MIN_SAMPLES_PER_CHANNEL = 2s`, `CHUNK_INTERVA
 
 | File | Role |
 |------|------|
-| `audio/capture.ts` | Buffers, timer, VAD gate, WAV build, STT dispatch, transcript callback, pause/resume, auto-pause on silence. |
-| `audio/vad.ts` | **runVAD(audio, sampleRate)** using **silero-vad** ONNX (downloaded to models dir). **ensureVADModel** loads once. |
-| `audio/processor.ts` | Optional fallback/helper for audio (used if needed alongside worklet). |
-| `audio/diarization.ts`, `audio/speaker-embeddings.ts` | Speaker diarization / embeddings (ecapa-tdnn); “You” vs “Others” is channel-based, not full diarization. |
+| `audio/capture.ts` | Ring buffers, segmentation loop (250 ms), VAD-based segment closure, overlap, WAV build, STT dispatch, transcript callback, pause/resume, defer transcription. |
+| `audio/vad.ts` | **runVAD(audio, sampleRate)** using **silero-vad** ONNX (auto-downloaded to models dir on first use). **ensureVADModel** loads once. |
+| `audio/processor.ts` | Resampling and helpers (e.g. **resampleAudio** when renderer sample rate ≠ 16 kHz). |
+| `audio/diarization.ts`, `audio/speaker-embeddings.ts` | Optional speaker diarization (ecapa-tdnn); default “You” vs “Others” is channel-based. |
 
 ---
 
@@ -126,10 +127,23 @@ Constants: `SAMPLE_RATE = 16000`, `MIN_SAMPLES_PER_CHANNEL = 2s`, `CHUNK_INTERVA
 
 ---
 
-### 8. Data flow summary
+### 8. Transcript cleanup (display & save)
+
+Full-transcript cleanup runs in the renderer when building the transcript for **display** and for **saving** (not in the live STT path):
+
+| File | Role |
+|------|------|
+| `lib/transcript-cleanup.ts` | **cleanTranscriptLines** (collapse consecutive duplicate lines, optional homophone fixes), **cleanGroupText** (collapse repeated sentences + homophones on merged blocks), **stripTrailingOutroLine** (optional), **cleanTranscriptLinesWithMapping** (for UI so copy/delete use correct raw indices). |
+| `lib/transcript-filter.ts` | Per-segment: **collapseRepetitions**, **normalizeSentenceCasing**, **filterHallucinatedTranscript** (used in main before sending each chunk). |
+
+Applied in **NewNotePage** and **NoteDetailPage**: cleaned lines → **groupTranscriptBySpeaker** → **cleanGroupText** on each group’s text. Same cleanup runs on **finalTranscript** when saving a note so stored transcript and summaries use the cleaned version.
+
+---
+
+### 9. Data flow summary
 
 - **Notes:** Renderer ↔ IPC ↔ **database.ts** (SQLite).
-- **Transcript:** AudioWorklet → IPC `recording:audio-chunk` → **capture.ts** → STT (local or **router** → cloud) → IPC `recording:transcript-chunk` → **RecordingContext** → UI.
+- **Transcript:** AudioWorklet → IPC `recording:audio-chunk` → **capture.ts** (ring → segmentation → STT) → filter → IPC `recording:transcript-chunk` → **RecordingContext** → **transcript-cleanup** at display/save → UI.
 - **Summaries:** NewNotePage / NoteDetailPage → IPC `llm:summarize` / `llm:chat` → **llm-engine** + **router** → cloud LLM → result back to renderer.
 - **Models:** Settings → IPC models/download, keychain/set → main; **ModelSettingsContext** syncs selected STT/AI model and connected providers to DB and keychain.
 
@@ -144,9 +158,16 @@ npm i
 # Run app (Electron + Vite)
 npm run dev
 
+# Electron app (recommended for full capture/STT)
+npm run dev:electron
+
 # Web-only (no Electron)
 npm run dev:web
 ```
+
+**Tests:** `npm test` runs Vitest (e.g. `src/test/transcript-cleanup.test.ts`, `transcript-filter.test.ts`, `vad-segments.test.ts`, `whisper-prompt.test.ts`).
+
+**Versioning:** When you make code changes that affect behavior or the shipped app, bump the version in `package.json` (e.g. patch: `1.0.3` → `1.0.4`). The DMG artifact name includes the version (`Syag-${version}-arm64.dmg`).
 
 ---
 
@@ -160,11 +181,11 @@ npm run build
 npm run package
 ```
 
-Output: **dist/Syag-1.0.0-arm64.dmg** (and `dist/mac-arm64/Syag.app`). Config: **electron-builder.yml** (appId: `com.syag.notes`, productName: Syag, asar with unpack for better-sqlite3 and onnxruntime-node).
+Output: **dist/Syag-{version}-arm64.dmg** (and `dist/mac-arm64/Syag.app`). Version comes from `package.json`. Config: **electron-builder.yml** (appId: `com.syag.notes`, productName: Syag, asar with unpack for better-sqlite3 and onnxruntime-node).
 
 ---
 
-## Project layout (source only)
+## Project layout (source, key files)
 
 ```
 electron/
@@ -205,6 +226,10 @@ src/
   components/          # UI + app-specific
   lib/
     electron-api.ts    # Typed electronAPI access
+    transcript-cleanup.ts   # Full-transcript cleanup (duplicate lines, homophones, outro)
+    transcript-filter.ts    # Per-segment filter (repetitions, hallucination, casing)
+    whisper-prompt.ts      # Whisper initial_prompt from meeting title + vocabulary
+  test/                    # Vitest tests (transcript-cleanup, transcript-filter, vad-segments, etc.)
 ```
 
 ---

@@ -39,6 +39,7 @@ const TOGGLE_DB_KEYS: Record<string, string> = {
   autoRecord: 'auto-record',
   realTimeTranscribe: 'real-time-transcription',
   transcribeWhenStopped: 'transcribe-when-stopped',
+  llmPostProcess: 'llm-post-process-transcript',
   aiSummaries: 'auto-generate-notes',
   summaryReady: 'summary-ready-notification',
   actionReminder: 'action-reminder-notification',
@@ -55,6 +56,7 @@ const DEFAULT_TOGGLES: Record<string, boolean> = {
   autoRecord: true,
   realTimeTranscribe: true,
   transcribeWhenStopped: false,
+  llmPostProcess: false,
   aiSummaries: true,
   summaryReady: true,
   actionReminder: true,
@@ -770,9 +772,7 @@ export default function SettingsPage() {
                     <p className="text-[11px] text-muted-foreground -mt-2">Download models to run entirely on your device. With local models, transcription and summaries stay on this device.</p>
 
                     <div className="space-y-1.5">
-                      {localModels
-                        .filter((m) => m.id !== "thestage-whisper-apple" || api?.app?.getPlatform?.() === "darwin")
-                        .map((model) => {
+                      {localModels.map((model) => {
                         const state = downloadStates[model.id] || "idle";
                         const progress = downloadProgress[model.id];
                         return (
@@ -963,6 +963,9 @@ export default function SettingsPage() {
                     </SettingRow>
                     <SettingRow label="Transcribe when recording stops" description="Run transcription once after you stop recording instead of live (privacy-friendly, works well with local models)">
                       <Toggle enabled={toggles.transcribeWhenStopped} onToggle={() => toggle("transcribeWhenStopped")} />
+                    </SettingRow>
+                    <SettingRow label="Enhance transcript with AI" description="Use your AI model to fix grammar, punctuation, and proper nouns in real-time. Requires a cloud AI model.">
+                      <Toggle enabled={toggles.llmPostProcess} onToggle={() => toggle("llmPostProcess")} />
                     </SettingRow>
                     <SettingRow label="Auto-generate AI notes" description="Create summaries and action items when recording ends">
                       <Toggle enabled={toggles.aiSummaries} onToggle={() => toggle("aiSummaries")} />

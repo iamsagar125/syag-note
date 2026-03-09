@@ -56,12 +56,7 @@ export type LocalModel = {
 export const localModels: LocalModel[] = [
   { id: "mlx-whisper-large-v3-turbo", name: "MLX Whisper Large V3 Turbo", size: "~3 GB", type: "stt", description: "Best quality — uses Apple Neural Engine. Click Download to install (ffmpeg + mlx-whisper)." },
   { id: "mlx-whisper-large-v3-turbo-8bit", name: "MLX Whisper Large V3 Turbo (8-bit)", size: "~864 MB", type: "stt", description: "8-bit quantized — smaller, faster. Click Download to install (ffmpeg + mlx-audio-plus)." },
-  { id: "thestage-whisper-apple", name: "TheStage Whisper (Apple)", size: "~2 GB", type: "stt", description: "Streaming, low power (CoreML). macOS only. Click Download to install." },
-  { id: "whisper-large-v3-turbo", name: "Whisper Large V3 Turbo", size: "1.6 GB", type: "stt", description: "Recommended — Nova-2 quality, 4x faster than Large V3" },
-  { id: "whisper-large-v3", name: "Whisper Large V3", size: "3.1 GB", type: "stt", description: "Best accuracy, slower" },
-  { id: "whisper-medium", name: "Whisper Medium", size: "1.5 GB", type: "stt", description: "Good balance of speed and accuracy" },
-  { id: "whisper-small", name: "Whisper Small", size: "488 MB", type: "stt", description: "Fast, moderate accuracy" },
-  { id: "whisper-tiny", name: "Whisper Tiny", size: "77 MB", type: "stt", description: "Fastest, basic accuracy" },
+  { id: "whisper-large-v3-turbo", name: "Whisper Large V3 Turbo", size: "1.6 GB", type: "stt", description: "Recommended — runs on any Mac via whisper.cpp" },
   { id: "llama-3.2-3b", name: "Llama 3.2 3B", size: "2.0 GB", type: "llm", description: "Compact local LLM" },
   { id: "phi-3-mini", name: "Phi-3 Mini", size: "2.3 GB", type: "llm", description: "Microsoft's efficient model" },
   { id: "gemma-2-2b", name: "Gemma 2 2B", size: "1.6 GB", type: "llm", description: "Google's lightweight model" },
@@ -204,8 +199,8 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
       if (data.success) {
         setDownloadStates((prev) => ({ ...prev, [data.modelId]: "downloaded" }));
         // Auto-select default models when installed on first launch
-        if (data.modelId === "whisper-tiny") {
-          setSelectedSTTModel((prev) => (prev === "" ? "local:whisper-tiny" : prev));
+        if (data.modelId === "whisper-large-v3-turbo") {
+          setSelectedSTTModel((prev) => (prev === "" ? "local:whisper-large-v3-turbo" : prev));
         }
         if (data.modelId === "gemma-2-2b") {
           setSelectedAIModel((prev) => (prev === "" ? "local:gemma-2-2b" : prev));
@@ -341,7 +336,7 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
   }, [api]);
 
   // Install default local STT + LLM on first launch after onboarding (Quill-style).
-  const DEFAULT_STT = "whisper-tiny";
+  const DEFAULT_STT = "whisper-large-v3-turbo";
   const DEFAULT_LLM = "gemma-2-2b";
   useEffect(() => {
     if (!api || !modelsListFetched) return;

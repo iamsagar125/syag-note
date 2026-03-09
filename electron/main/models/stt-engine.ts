@@ -23,6 +23,7 @@ export interface WordTimestamp {
 export interface STTResult {
   text: string
   words: WordTimestamp[]
+  avgConfidence?: number
 }
 
 export function resetContext(): void {
@@ -332,10 +333,6 @@ export async function processWithLocalSTT(wavBuffer: Buffer, modelId: string, cu
   if (modelId === 'mlx-whisper-large-v3-turbo-8bit') {
     return processWithMLXWhisper8Bit(wavBuffer, customVocabulary)
   }
-  if (modelId === 'thestage-whisper-apple') {
-    return processWithTheStageWhisper(wavBuffer, customVocabulary)
-  }
-
   const modelPath = getModelPath(modelId)
   if (!modelPath) {
     throw new Error(`Model not downloaded: ${modelId}. Please download it from Settings > AI Models.`)
@@ -387,13 +384,7 @@ for line in sys.stdin:
         req = json.loads(line.strip())
         audio_path = req.get("audio_path", "")
         prompt = req.get("prompt", "")
-        kwargs = {
-            "path_or_hf_repo": _model_repo,
-            "language": "en",
-            "temperature": 0.0,
-            "word_timestamps": True,
-            "condition_on_previous_text": False,
-        }
+        kwargs = {"path_or_hf_repo": _model_repo, "language": "en", "word_timestamps": True, "condition_on_previous_text": True, "compression_ratio_threshold": 2.0, "no_speech_threshold": 0.3, "logprob_threshold": -0.5}
         if prompt:
             kwargs["initial_prompt"] = prompt
         result = mlx_whisper.transcribe(audio_path, **kwargs)
@@ -433,7 +424,6 @@ function ensureMLXWorker(): Promise<void> {
     mlxWorkerReady = false
     mlxWorker = spawn('nice', ['-n', '10', 'python3', '-u', '-c', MLX_WORKER_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: getEnvPathWithBrew() },
     })
 
     let resolved = false
@@ -519,7 +509,6 @@ export async function installMLXWhisper(): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const proc = spawn('python3', ['-m', 'pip', 'install', 'mlx-whisper'], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: getEnvPathWithBrew() },
     })
     let stderr = ''
     proc.stderr?.on('data', (d) => { stderr += d.toString() })
@@ -815,213 +804,6 @@ async function processWithMLXWhisper8Bit(wavBuffer: Buffer, customVocabulary?: s
   }
 }
 
-// ─── TheStage Whisper (Apple / CoreML) ──────────────────────────────────────
-
-const THESTAGE_HINT = ' macOS only. Install from Settings > AI Models (Download) or run: pip3 install thestage-speechkit[apple].'
-
-const THESTAGE_WORKER_SCRIPT = `
-import json, sys
-# Import only; model loads on first transcribe
-from thestage_speechkit.apple import ASRPipeline
-_pipeline = None
-def get_pipeline():
-    global _pipeline
-    if _pipeline is None:
-        _pipeline = ASRPipeline(
-            model='TheStageAI/thewhisper-large-v3-turbo',
-            model_size='S',
-            chunk_length_s=10
-        )
-    return _pipeline
-sys.stdout.write('{"status":"ready"}\\n')
-sys.stdout.flush()
-for line in sys.stdin:
-    try:
-        req = json.loads(line.strip())
-        audio_path = req.get("audio_path", "")
-        result = get_pipeline()(audio_path, return_timestamps="word")
-        text = result.get("text", "") if isinstance(result, dict) else str(result or "")
-        words = []
-        if isinstance(result, dict):
-            if "chunks" in result:
-                for c in result["chunks"]:
-                    words.append({"word": c.get("word", c.get("text", "")), "start": c.get("start", 0), "end": c.get("end", 0)})
-            elif "segments" in result:
-                for seg in result["segments"]:
-                    for w in seg.get("words", []):
-                        words.append({"word": w.get("word", ""), "start": w.get("start", 0), "end": w.get("end", 0)})
-        sys.stdout.write(json.dumps({"text": text, "words": words}) + '\\n')
-        sys.stdout.flush()
-    except Exception as e:
-        sys.stdout.write(json.dumps({"error": str(e)}) + '\\n')
-        sys.stdout.flush()
-`
-
-let thestageWorker: ReturnType<typeof spawn> | null = null
-let thestageWorkerReady = false
-let thestageIdleTimer: ReturnType<typeof setTimeout> | null = null
-const THESTAGE_IDLE_TIMEOUT_MS = 300000
-
-function resetTheStageIdleTimer(): void {
-  if (thestageIdleTimer) clearTimeout(thestageIdleTimer)
-  thestageIdleTimer = setTimeout(() => killTheStageWorker(), THESTAGE_IDLE_TIMEOUT_MS)
-}
-
-export function killTheStageWorker(): void {
-  if (thestageIdleTimer) { clearTimeout(thestageIdleTimer); thestageIdleTimer = null }
-  if (thestageWorker) {
-    try { thestageWorker.kill() } catch {}
-    thestageWorker = null
-    thestageWorkerReady = false
-  }
-}
-
-function ensureTheStageWorker(): Promise<void> {
-  if (require('os').platform() !== 'darwin') {
-    return Promise.reject(new Error('TheStage Whisper is only available on macOS.' + THESTAGE_HINT))
-  }
-  return new Promise((resolve, reject) => {
-    if (thestageWorker && thestageWorkerReady) {
-      resetTheStageIdleTimer()
-      resolve()
-      return
-    }
-    if (thestageWorker) {
-      const waitTimer = setTimeout(() => reject(new Error('TheStage worker startup timeout' + THESTAGE_HINT)), MLX_STARTUP_READY_TIMEOUT_MS)
-      const check = setInterval(() => {
-        if (thestageWorkerReady) { clearInterval(check); clearTimeout(waitTimer); resolve() }
-      }, 200)
-      return
-    }
-    thestageWorkerReady = false
-    thestageWorker = spawn('nice', ['-n', '10', 'python3', '-u', '-c', THESTAGE_WORKER_SCRIPT], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: getEnvPathWithBrew() },
-    })
-    let resolved = false
-    let stderrBuf = ''
-    thestageWorker.stderr?.on('data', (d: Buffer) => { stderrBuf += d.toString() })
-    thestageWorker.stdout!.once('data', (data: Buffer) => {
-      try {
-        const msg = JSON.parse(data.toString().trim())
-        if (msg.status === 'ready') {
-          thestageWorkerReady = true
-          resetTheStageIdleTimer()
-          if (!resolved) { resolved = true; resolve() }
-        }
-      } catch {}
-    })
-    const fail = (base: string) => {
-      const tail = stderrBuf.trim().split('\n').slice(-8).join('\n').slice(-500)
-      return base + (tail ? ` Last stderr: ${tail}` : '') + THESTAGE_HINT
-    }
-    thestageWorker.on('exit', () => {
-      thestageWorker = null
-      thestageWorkerReady = false
-      if (!resolved) { resolved = true; reject(new Error(fail('TheStage worker exited during startup.'))) }
-    })
-    thestageWorker.on('error', (err) => {
-      thestageWorker = null
-      thestageWorkerReady = false
-      if (!resolved) { resolved = true; reject(err) }
-    })
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true
-        killTheStageWorker()
-        reject(new Error(fail('TheStage worker startup timed out.')))
-      }
-    }, MLX_STARTUP_READY_TIMEOUT_MS)
-  })
-}
-
-let thestageAvailable: boolean | null = null
-
-export async function checkTheStageWhisperAvailable(): Promise<boolean> {
-  if (require('os').platform() !== 'darwin') return false
-  if (thestageAvailable !== null) return thestageAvailable
-  try {
-    execSync('python3 -c "from thestage_speechkit.apple import ASRPipeline"', { stdio: 'pipe', timeout: 10000 })
-    thestageAvailable = true
-  } catch {
-    thestageAvailable = false
-  }
-  return thestageAvailable
-}
-
-export async function installTheStageWhisper(): Promise<boolean> {
-  if (require('os').platform() !== 'darwin') {
-    console.warn('[TheStage] Only available on macOS.')
-    return false
-  }
-  await installFfmpeg()
-  return new Promise<boolean>((resolve) => {
-    const proc = spawn('python3', ['-m', 'pip', 'install', 'thestage-speechkit[apple]'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: getEnvPathWithBrew() },
-    })
-    let stderr = ''
-    proc.stderr?.on('data', (d) => { stderr += d.toString() })
-    proc.on('close', (code) => {
-      if (code === 0) {
-        thestageAvailable = true
-        resolve(true)
-      } else {
-        console.warn('[TheStage] pip install thestage-speechkit[apple] failed:', code, stderr.slice(-500))
-        resolve(false)
-      }
-    })
-    proc.on('error', () => resolve(false))
-  })
-}
-
-async function processWithTheStageWhisper(wavBuffer: Buffer, customVocabulary?: string): Promise<STTResult> {
-  const available = await checkTheStageWhisperAvailable()
-  if (!available) {
-    throw new Error('TheStage Whisper not available. macOS only. Install from Settings > AI Models (Download) or run: pip3 install thestage-speechkit[apple]')
-  }
-  await ensureTheStageWorker()
-  const tmpDir = join(app.getPath('temp'), 'syag-stt')
-  mkdirSync(tmpDir, { recursive: true })
-  const tmpFile = join(tmpDir, `thestage-chunk-${Date.now()}.wav`)
-  try {
-    writeFileSync(tmpFile, wavBuffer)
-    const request = JSON.stringify({ audio_path: tmpFile }) + '\n'
-    const result = await new Promise<STTResult>((resolve, reject) => {
-      if (!thestageWorker?.stdin || !thestageWorker?.stdout) {
-        reject(new Error('TheStage worker not available'))
-        return
-      }
-      const timeout = setTimeout(() => reject(new Error('TheStage transcription timed out (180s). First run may take several minutes to load the model.')), 180000)
-      const onData = (data: Buffer) => {
-        clearTimeout(timeout)
-        thestageWorker?.stdout?.removeListener('data', onData)
-        resetTheStageIdleTimer()
-        const line = data.toString().trim()
-        try {
-          const parsed = JSON.parse(line)
-          if (parsed.error) {
-            reject(new Error(parsed.error))
-            return
-          }
-          const text = cleanTranscriptText(parsed.text || '')
-          const words: WordTimestamp[] = (parsed.words || [])
-            .map((w: any) => ({ word: (w.word || '').trim(), start: w.start ?? 0, end: w.end ?? 0 }))
-            .filter((w: WordTimestamp) => w.word.length > 0)
-          resolve({ text, words })
-        } catch {
-          resolve({ text: cleanTranscriptText(line), words: [] })
-        }
-      }
-      thestageWorker.stdout.on('data', onData)
-      thestageWorker.stdin.write(request)
-    })
-    return result
-  } finally {
-    try { unlinkSync(tmpFile) } catch {}
-  }
-}
-
 // Exported so battery-aware mode can adjust at runtime
 export let sttThreadCount = Math.min(4, Math.floor(require('os').cpus().length / 2))
 
@@ -1038,9 +820,9 @@ function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string,
       '-t', String(sttThreadCount),
       '--beam-size', '5',
       '--entropy-thold', '2.4',
-      '--logprob-thold', '-1.0',
-      '--no-speech-thold', '0.6',
-      '--word-thold', '0.01',
+      '--logprob-thold', '-0.5',
+      '--no-speech-thold', '0.3',
+      '--word-thold', '0.5',
       '--max-len', '0',
       '--output-json',
       '--print-special', 'false',
@@ -1137,6 +919,9 @@ function parseWhisperOutput(stdout: string, audioPath: string): STTResult {
       const words: WordTimestamp[] = []
       let fullText = ''
 
+      let totalLogProb = 0
+      let tokenCount = 0
+
       if (jsonData.transcription) {
         for (const segment of jsonData.transcription) {
           const segText = segment.text?.trim() || ''
@@ -1151,6 +936,10 @@ function parseWhisperOutput(stdout: string, audioPath: string): STTResult {
                 start: (token.offsets?.from ?? segment.offsets?.from ?? 0) / 1000,
                 end: (token.offsets?.to ?? segment.offsets?.to ?? 0) / 1000,
               })
+              if (token.p != null && token.p > 0) {
+                totalLogProb += Math.log(token.p)
+                tokenCount++
+              }
             }
           }
         }
@@ -1162,6 +951,7 @@ function parseWhisperOutput(stdout: string, audioPath: string): STTResult {
       return {
         text: cleanedText,
         words: words.filter(w => w.word.length > 0),
+        avgConfidence: tokenCount > 0 ? totalLogProb / tokenCount : undefined,
       }
     }
   } catch (err) {

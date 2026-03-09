@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Sidebar, SidebarTopBarLeft } from "@/components/Sidebar";
+import { Sidebar, SidebarCollapseButton, SidebarTopBarLeft } from "@/components/Sidebar";
 import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { AskBar } from "@/components/AskBar";
 import { EditableSummary } from "@/components/EditableSummary";
@@ -138,24 +138,11 @@ function isPlaceholderSummary(s: SummaryData | null): boolean {
   );
 }
 
-/** Derive a folder name from the note/meeting title (trim, optional suffix strip, default "Meetings"). */
-function deriveFolderNameFromTitle(title: string): string {
-  let t = (title || "").trim();
-  const suffixes = [
-    /\s*-\s*Meeting\s*$/i, /\s*-\s*Sync\s*$/i, /\s*-\s*Call\s*$/i,
-    /\s*-\s*1:1\s*$/i, /\s*Standup\s*$/i, /\s*Meeting\s*$/i, /\s*Sync\s*$/i, /\s*Call\s*$/i,
-  ];
-  for (const re of suffixes) {
-    t = t.replace(re, "");
-  }
-  return (t.trim() || "Meetings");
-}
-
 export default function NewNotePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const eventState = location.state as { eventTitle?: string; eventId?: string; joinLink?: string; startFresh?: boolean; triggerPauseAndSummarize?: boolean } | null;
-  const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, systemAudioActive, usingWebSpeech, captureError, clearCaptureError, sttStatus, sttErrorMessage, lastSuccessfulTranscriptTime, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture, setSessionScratch, getSessionScratch } = useRecording();
+  const { activeSession, startSession, resumeSession, updateSession, clearSession, transcriptLines, removeTranscriptLineAt, removeTranscriptLinesAt, isCapturing, usingWebSpeech, captureError, clearCaptureError, sttStatus, sttErrorMessage, lastSuccessfulTranscriptTime, startAudioCapture, stopAudioCapture, pauseAudioCapture, resumeAudioCapture, setSessionScratch, getSessionScratch } = useRecording();
   const { selectedSTTModel, selectedAIModel, useLocalModels } = useModelSettings();
   const api = getElectronAPI();
 
@@ -209,8 +196,7 @@ export default function NewNotePage() {
   const lastStartFreshKeyRef = useRef<string | null>(null);
   /** Granola-style: if user manually edited title, don't overwrite with AI-generated one */
   const userHasEditedTitleRef = useRef(false);
-  const { folders, createFolder, getOrCreateFolderByName, addNoteToFolder } = useFolders();
-  const [draftAttachments, setDraftAttachments] = useState<{ type: "image"; url: string }[]>([]);
+  const { folders, createFolder } = useFolders();
   const { addNote, deleteNote } = useNotes();
   const [customTemplates, setCustomTemplates] = useState<Array<{ id: string; name: string; prompt: string }>>([]);
 
@@ -309,7 +295,7 @@ export default function NewNotePage() {
 
     let generatedSummary: SummaryData;
     try {
-      if (api && selectedAIModel && autoGenerateNotes) {
+      if (api && selectedAIModel) {
         try {
           const templateId = meetingTemplateRef.current;
           const customPrompt = BUILTIN_TEMPLATE_IDS.has(templateId)
@@ -329,18 +315,13 @@ export default function NewNotePage() {
           generatedSummary = generateLocalSummary(useNotes, finalTranscript, !!selectedSTTModel);
         }
       } else {
-        await new Promise(r => setTimeout(r, autoGenerateNotes ? 1500 : 0));
+        await new Promise(r => setTimeout(r, 1500));
         generatedSummary = generateLocalSummary(useNotes, finalTranscript, !!selectedSTTModel);
       }
 
       lastGeneratedTranscriptLengthRef.current = finalTranscript.length;
       lastGeneratedNotesRef.current = useNotes;
-      generatedSummary = {
-        ...generatedSummary,
-        attachments: [...(generatedSummary.attachments || []), ...draftAttachments],
-      };
       setSummary(generatedSummary);
-      setDraftAttachments([]);
 
       const now = new Date();
       const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
@@ -357,9 +338,6 @@ export default function NewNotePage() {
         const finalTitle = userHasEditedTitleRef.current
           ? useTitle || noteTitle
           : (aiTitle || noteTitle);
-        const folderId = selectedFolderId != null
-          ? selectedFolderId
-          : getOrCreateFolderByName(deriveFolderNameFromTitle(finalTitle || eventState?.eventTitle || "")).id;
         addNote({
           id: noteIdToSave,
           title: finalTitle,
@@ -371,9 +349,8 @@ export default function NewNotePage() {
           personalNotes: useNotes,
           transcript: finalTranscript,
           summary: generatedSummary,
-          folderId,
+          folderId: selectedFolderId,
         });
-        addNoteToFolder(noteIdToSave, folderId);
       } catch (err) {
         console.error('Failed to save note:', err);
         toast.error("Note could not be saved. Check console.");
@@ -385,7 +362,7 @@ export default function NewNotePage() {
     } finally {
       setIsSummarizing(false);
     }
-  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, draftAttachments, addNote, addNoteToFolder, getOrCreateFolderByName, api, selectedAIModel, usingRealAudio, isSummarizing, activeSession?.startTime, activeSession?.isRecording, activeSession, clearSession, eventState?.eventTitle]);
+  }, [title, personalNotes, noteId, elapsedSeconds, selectedFolderId, addNote, api, selectedAIModel, usingRealAudio, isSummarizing, activeSession?.startTime, activeSession?.isRecording, activeSession, clearSession]);
   // Note: userHasEditedTitleRef is a ref, not in deps
 
   // When indicator triggered "pause and summarize", we land here with state; run generateNotes with scratch and clear state
@@ -544,13 +521,9 @@ export default function NewNotePage() {
     const startTimeMs = activeSession.startTime ?? now.getTime() - elapsedSeconds * 1000;
     const timeRange = formatTimeRange(startTimeMs, elapsedSeconds);
 
-    const noteTitle = title || "New note";
-    const folderId = selectedFolderId != null
-      ? selectedFolderId
-      : getOrCreateFolderByName(deriveFolderNameFromTitle(noteTitle || eventState?.eventTitle || "")).id;
     addNote({
       id: noteId,
-      title: noteTitle,
+      title: title || "New note",
       date: dateStr,
       time: timeStr,
       duration: formatTime(elapsedSeconds),
@@ -559,9 +532,8 @@ export default function NewNotePage() {
       personalNotes,
       transcript: transcriptLines,
       summary: null,
-      folderId,
+      folderId: selectedFolderId,
     });
-    addNoteToFolder(noteId, folderId);
   }, [
     activeSession,
     noteId,
@@ -575,9 +547,6 @@ export default function NewNotePage() {
     isSummarizing,
     selectedFolderId,
     addNote,
-    addNoteToFolder,
-    getOrCreateFolderByName,
-    eventState?.eventTitle,
   ]);
 
   // Sync recording state with main process (auto-pause disabled — manual pause only)
@@ -734,19 +703,13 @@ export default function NewNotePage() {
 
   const handleDeleteNote = () => {
     deleteNote(noteId);
-    clearSession();
     navigate("/");
   };
 
-  // Use wall-clock when recording so bottom timer matches tray; when paused use frozen elapsedSeconds
-  const displayElapsedSeconds =
-    activeSession?.startTime != null && activeSession?.isRecording
-      ? Math.floor((Date.now() - activeSession.startTime) / 1000)
-      : (activeSession?.elapsedSeconds ?? 0);
-  const elapsed = formatTime(displayElapsedSeconds);
+  const elapsed = formatTime(elapsedSeconds);
   const displayTimeRange =
     activeSession?.startTime != null
-      ? formatTimeRange(activeSession.startTime, displayElapsedSeconds)
+      ? formatTimeRange(activeSession.startTime, elapsedSeconds)
       : elapsed;
   const isStopped = recordingState === "stopped";
   const showSummaryPanel = (recordingState === "paused" || recordingState === "stopped") && (summary || isSummarizing);
@@ -826,10 +789,12 @@ export default function NewNotePage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {sidebarOpen && (
+      {sidebarOpen ? (
         <div className="w-56 flex-shrink-0 overflow-hidden">
           <Sidebar />
         </div>
+      ) : (
+        <SidebarCollapseButton />
       )}
 
       <main className="flex flex-1 flex-col min-w-0">
@@ -991,58 +956,13 @@ export default function NewNotePage() {
 
                 {/* Content: recording vs paused/stopped with notes */}
                 {!showSummaryPanel ? (
-                  <div className="space-y-4">
-                    <textarea
-                      value={personalNotes}
-                      onChange={(e) => setPersonalNotes(e.target.value)}
-                      onPaste={(e) => {
-                        const items = e.clipboardData?.items;
-                        if (!items) return;
-                        for (let i = 0; i < items.length; i++) {
-                          const item = items[i];
-                          if (item.type.startsWith("image/")) {
-                            e.preventDefault();
-                            const file = item.getAsFile();
-                            if (!file) continue;
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                              const url = reader.result as string;
-                              if (url) setDraftAttachments((prev) => [...prev, { type: "image", url }]);
-                            };
-                            reader.readAsDataURL(file);
-                            break;
-                          }
-                        }
-                      }}
-                      placeholder="Write notes..."
-                      className="min-h-[50vh] w-full resize-none bg-transparent text-[17px] font-medium text-foreground leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none"
-                      autoFocus
-                    />
-                    {draftAttachments.length > 0 && (
-                      <div>
-                        <p className="text-[13px] font-medium text-foreground/80 mb-1.5">Attachments</p>
-                        <div className="flex flex-wrap gap-2">
-                          {draftAttachments.map((att, i) => (
-                            <div key={i} className="relative group/thumb rounded-lg border border-border overflow-hidden bg-muted/30">
-                              <img
-                                src={att.url}
-                                alt=""
-                                className="h-[100px] w-auto object-contain"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setDraftAttachments((prev) => prev.filter((_, j) => j !== i))}
-                                className="absolute top-1 right-1 p-1 rounded bg-background/80 border border-border opacity-0 group-hover/thumb:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
-                                aria-label="Remove image"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <textarea
+                    value={personalNotes}
+                    onChange={(e) => setPersonalNotes(e.target.value)}
+                    placeholder="Write notes..."
+                    className="min-h-[60vh] w-full resize-none bg-transparent text-[17px] font-medium text-foreground leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none"
+                    autoFocus
+                  />
                 ) : (
                   <div className="animate-fade-in">
                     {viewMode === "my-notes" ? (
@@ -1159,32 +1079,9 @@ export default function NewNotePage() {
             <div className="w-full lg:w-[36rem] flex-shrink-0 border-t lg:border-t-0 lg:border-l border-border bg-card/50 overflow-y-auto rounded-tl-2xl rounded-tr-2xl max-h-[45vh] lg:max-h-none">
               <div className="px-4 py-3 border-b border-border">
                 <div className="flex items-center justify-between gap-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-medium uppercase tracking-wider text-foreground/80">
-                      {recordingState === "recording" ? "Live Transcript" : "Transcript"}
-                    </span>
-                    {recordingState === "recording" && usingRealAudio && (
-                      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                        {sttStatus === "processing" && (
-                          <>
-                            <Loader2 className="h-3 w-3 animate-spin flex-shrink-0" />
-                            <span>Transcribing…</span>
-                          </>
-                        )}
-                        {sttStatus === "idle" && isCapturing && (
-                          <>
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
-                            <span>Listening</span>
-                          </>
-                        )}
-                        {sttStatus === "error" && sttErrorMessage && (
-                          <span className="text-destructive" title={sttErrorMessage}>
-                            STT error
-                          </span>
-                        )}
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-[12px] font-medium uppercase tracking-wider text-foreground/80">
+                    {recordingState === "recording" ? "Live Transcript" : "Transcript"}
+                  </span>
                   <div className="flex items-center gap-0.5">
                     {currentTranscript.length > 0 && (
                       <button
@@ -1221,13 +1118,6 @@ export default function NewNotePage() {
                   )}
                 </div>
               </div>
-              {recordingState === "recording" && usingRealAudio && isCapturing && !systemAudioActive && (
-                <div className="px-4 py-2 border-b border-border/50 bg-muted/30">
-                  <p className="text-[11px] text-muted-foreground">
-                    Mic only. Enable Screen Recording in System Settings (Privacy &amp; Security) and restart the note to capture system audio (e.g. YouTube).
-                  </p>
-                </div>
-              )}
               <div className="p-3 space-y-4">
                 {!transcriptSearch && noTranscriptYet && (
                   <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-3">
@@ -1321,6 +1211,45 @@ export default function NewNotePage() {
                         : <>No STT model configured. Go to <strong>Settings → Transcription</strong> to download a Whisper model or connect a cloud STT provider.</>
                       }
                     </p>
+                  </div>
+                )}
+                {!transcriptSearch && recordingState === "recording" && (
+                  <div className="flex items-center gap-1.5 pt-1 animate-pulse">
+                    <div className="h-1 w-1 rounded-full bg-destructive" />
+                    <span className="text-[10px] text-muted-foreground">
+                      {usingRealAudio && isCapturing
+                        ? (usingWebSpeech ? "Listening (browser speech recognition)..." : "Listening to mic & system audio...")
+                        : "Listening..."}
+                    </span>
+                  </div>
+                )}
+                {!transcriptSearch && recordingState === "recording" && usingRealAudio && sttStatus === "processing" && (
+                  <p className="text-[10px] text-muted-foreground pt-0.5">Transcribing...</p>
+                )}
+                {!transcriptSearch && (recordingState === "recording" || recordingState === "paused") && sttStatus === "error" && sttErrorMessage && (
+                  <p className="text-[10px] text-destructive pt-0.5" title={sttErrorMessage}>
+                    STT error: {sttErrorMessage.length > 60 ? sttErrorMessage.slice(0, 57) + "…" : sttErrorMessage}
+                  </p>
+                )}
+                {!transcriptSearch && sttStale && (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 pt-0.5">
+                    No transcription for a while. Check your STT model and connection.
+                  </p>
+                )}
+                {!transcriptSearch && (recordingState === "recording" || recordingState === "paused") && activeSTTLabel && (
+                  <p className="text-[10px] text-muted-foreground pt-0.5">
+                    Transcription: {activeSTTLabel}. To change, pick another model in Settings and start or resume recording.
+                  </p>
+                )}
+                {!transcriptSearch && useLocalModels && (recordingState === "recording" || recordingState === "paused") && (
+                  <p className="text-[10px] text-muted-foreground pt-0.5">
+                    With local models, transcription and summaries stay on this device.
+                  </p>
+                )}
+                {!transcriptSearch && recordingState === "paused" && (
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <Pause className="h-2.5 w-2.5 text-muted-foreground" />
+                    <span className="text-[10px] text-muted-foreground">Paused</span>
                   </div>
                 )}
                 {transcriptSearch && currentTranscript.filter(l => l.text.toLowerCase().includes(transcriptSearch.toLowerCase())).length === 0 && (
