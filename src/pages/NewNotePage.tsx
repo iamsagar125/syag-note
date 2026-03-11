@@ -1135,9 +1135,11 @@ export default function NewNotePage() {
                     .filter(({ line }) => !transcriptSearch || line.text.toLowerCase().includes(transcriptSearch.toLowerCase()));
                   const groups = groupTranscriptBySpeaker(filtered.map(({ line, originalIndex }) => ({ ...line, originalIndex })));
                   const searchRegex = transcriptSearch ? new RegExp(`(${transcriptSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi") : null;
-                  return groups.map((group) => {
+                  return groups.map((group, groupIdx) => {
                     const isMe = group.speaker === "You";
                     const displayLabel = isMe ? "Me" : "Them";
+                    const prevGroup = groupIdx > 0 ? groups[groupIdx - 1] : null;
+                    const showLabel = !prevGroup || prevGroup.speaker !== group.speaker;
                     return (
                       <div
                         key={group.indices.join("-")}
@@ -1154,9 +1156,11 @@ export default function NewNotePage() {
                               : "bg-muted/80 text-foreground/90 rounded-bl-md"
                           )}
                         >
-                          <p className="text-[12px] font-medium text-foreground/70 mb-0.5">
-                            {displayLabel}
-                          </p>
+                          {showLabel && (
+                            <p className="text-[12px] font-medium text-foreground/70 mb-0.5">
+                              {displayLabel}
+                            </p>
+                          )}
                           <p>
                             {searchRegex ? (
                               group.text.split(searchRegex).map((part, j) =>

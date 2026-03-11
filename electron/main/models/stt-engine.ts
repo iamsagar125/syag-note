@@ -384,7 +384,7 @@ for line in sys.stdin:
         req = json.loads(line.strip())
         audio_path = req.get("audio_path", "")
         prompt = req.get("prompt", "")
-        kwargs = {"path_or_hf_repo": _model_repo, "language": "en", "word_timestamps": True, "condition_on_previous_text": True, "compression_ratio_threshold": 2.0, "no_speech_threshold": 0.3, "logprob_threshold": -0.5}
+        kwargs = {"path_or_hf_repo": _model_repo, "language": "en", "word_timestamps": True, "condition_on_previous_text": True, "compression_ratio_threshold": 2.0, "no_speech_threshold": 0.3, "logprob_threshold": -1.0}
         if prompt:
             kwargs["initial_prompt"] = prompt
         result = mlx_whisper.transcribe(audio_path, **kwargs)
@@ -822,7 +822,7 @@ function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string,
       '--entropy-thold', '2.4',
       '--logprob-thold', '-0.5',
       '--no-speech-thold', '0.3',
-      '--word-thold', '0.5',
+      '--word-thold', '0.01',
       '--max-len', '0',
       '--output-json',
       '--print-special', 'false',

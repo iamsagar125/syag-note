@@ -32,13 +32,17 @@ const correctionQueue: Array<{ speaker: string; time: string; text: string }> = 
 let isCorrecting = false
 const CORRECTION_QUEUE_MAX = 20
 const CORRECTION_TIMEOUT_MS = 15000
+/** Sliding window of recently corrected segments for LLM context continuity. */
+const recentCorrectedSegments: string[] = []
+const MAX_RECENT_CONTEXT = 3
 
 // Near real-time: process every 2.5s when active, 15s when idle; 1s minimum buffer for faster first result
-const CHUNK_INTERVAL_ACTIVE_MS = 2500
+const CHUNK_INTERVAL_ACTIVE_MS = 5000
 const CHUNK_INTERVAL_IDLE_MS = 15000
 const SAMPLE_RATE = 16000
 // Auto-pause on silence disabled — user manually pauses and uses "Generate summary" button
-const MIN_SAMPLES_PER_CHANNEL = 16000 * 1 // 1s minimum for STT (faster first result; APIs support short audio)
+const MIN_SAMPLES_PER_CHANNEL = 16000 * 2 // 2s minimum for STT (more context = fewer word errors)
+const EARLY_TRIGGER_SAMPLES = 16000 * 4  // 4s: early-trigger threshold for low-latency first result
 // Diarization is channel-based: channel 0 = mic (You), channel 1 = system audio (Others).
 // When you're muted, mic may still send silence/comfort noise; we use stricter gates for "You" to avoid false labels.
 const SPEAKER_BY_CHANNEL = ['You', 'Others'] as const
@@ -99,6 +103,7 @@ export async function startRecording(
   llmPostProcessEnabled = getSetting('llm-post-process-transcript') === 'true'
   correctionQueue.length = 0
   isCorrecting = false
+  recentCorrectedSegments.length = 0
   audioBuffers[0].length = 0
   audioBuffers[1].length = 0
   recordingStartTime = Date.now()
@@ -231,7 +236,7 @@ export function processAudioChunk(pcmData: Float32Array, channel: number): boole
   // Near real-time: schedule STT as soon as we have enough audio (don't wait for next timer). Skip when transcribe-when-stopped.
   if (!deferTranscription) {
     const totalSamples = audioBuffers[ch].reduce((sum, c) => sum + c.length, 0)
-    if (!isProcessing && totalSamples >= MIN_SAMPLES_PER_CHANNEL) {
+    if (!isProcessing && totalSamples >= EARLY_TRIGGER_SAMPLES) {
       setImmediate(() => processBufferedAudio())
     }
   }
@@ -294,9 +299,16 @@ async function processBufferedAudio(): Promise<void> {
       let speechAudio = merged
       let hasSpeech = true
       try {
-        // Adaptive VAD: measure ambient noise, adjust threshold per channel
-        const ambientWindow = merged.subarray(0, Math.min(SAMPLE_RATE / 2, merged.length))
-        const ambientEnergy = ambientWindow.reduce((s, v) => s + v * v, 0) / ambientWindow.length
+        // Adaptive VAD: find the quietest 0.5s window in the buffer as ambient baseline
+        const windowLen = Math.min(Math.floor(SAMPLE_RATE / 2), merged.length)
+        const stepSize = Math.max(1, Math.floor(windowLen / 4))
+        let minWindowEnergy = Infinity
+        for (let wi = 0; wi + windowLen <= merged.length; wi += stepSize) {
+          const win = merged.subarray(wi, wi + windowLen)
+          const winEnergy = win.reduce((s, v) => s + v * v, 0) / win.length
+          if (winEnergy < minWindowEnergy) minWindowEnergy = winEnergy
+        }
+        const ambientEnergy = minWindowEnergy === Infinity ? 0 : minWindowEnergy
         const vadThreshold = channel === 0
           ? Math.max(0.45, Math.min(0.65, 0.50 + ambientEnergy * 100))
           : Math.max(0.40, Math.min(0.60, 0.45 + ambientEnergy * 100))
@@ -354,7 +366,7 @@ async function processBufferedAudio(): Promise<void> {
       }
 
       // Confidence-based filtering: skip low-confidence segments (likely noise/hallucination)
-      if (sttResult.avgConfidence != null && sttResult.avgConfidence < -2.0) {
+      if (sttResult.avgConfidence != null && sttResult.avgConfidence < -3.0) {
         isProcessing = false
         statusCallback?.({ state: 'stt-idle' })
         continue
@@ -521,11 +533,19 @@ function filterHallucinatedTranscript(text: string): string | null {
 
 // ─── LLM Post-Processing (background correction queue) ──────────────────────
 
-function buildCorrectionPrompt(text: string, vocabulary: string[]): string {
-  const vocabHint = vocabulary.length > 0
-    ? `\nProper nouns and domain terms: ${vocabulary.slice(0, 30).join(', ')}`
-    : ''
-  return `Fix grammar, punctuation, and capitalization in this meeting transcript segment. Correct proper nouns using the vocabulary list. Keep the exact meaning — do not add, remove, or paraphrase content. Return ONLY the corrected text.${vocabHint}\n\n${text}`
+function buildCorrectionPrompt(text: string, vocabulary: string[], meetingTitle: string, recentContext: string[]): string {
+  const parts: string[] = []
+
+  if (meetingTitle) parts.push(`Meeting: ${meetingTitle}`)
+  if (vocabulary.length > 0) parts.push(`Domain terms: ${vocabulary.slice(0, 30).join(', ')}`)
+  if (recentContext.length > 0) {
+    parts.push('Recent transcript for context:')
+    for (const seg of recentContext) parts.push(`- ${seg}`)
+  }
+  parts.push('')
+  parts.push(`Correct this segment:\n${text}`)
+
+  return parts.join('\n')
 }
 
 function enqueueCorrection(item: { speaker: string; time: string; text: string }): void {
@@ -553,17 +573,17 @@ async function processCorrectionQueue(): Promise<void> {
         continue
       }
 
-      const prompt = buildCorrectionPrompt(item.text, sttVocabularyTerms)
+      const prompt = buildCorrectionPrompt(item.text, sttVocabularyTerms, meetingTitleForPrompt, recentCorrectedSegments)
       const corrected = await Promise.race([
         routeLLM([
-          { role: 'system', content: 'You are a transcript editor. Output only the corrected text, nothing else.' },
+          { role: 'system', content: 'You are a transcript editor correcting automated speech-to-text output. Fix misheard words, grammar, punctuation, and capitalization. Words may be phonetically similar to the correct word (e.g., "very fling" → "verify link"). Use the meeting context and domain terms to infer correct words. Keep the exact meaning — do not add, remove, or paraphrase content. Return ONLY the corrected text.' },
           { role: 'user', content: prompt },
         ], llmModel),
         new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), CORRECTION_TIMEOUT_MS)),
       ])
 
       const cleaned = corrected.trim()
-      // Sanity check: skip if empty, unchanged, or too different (>60% word change = LLM hallucinated)
+      // Sanity check: skip if empty, unchanged, or too different (LLM hallucinated)
       if (cleaned && cleaned !== item.text && !isCorrectionTooFar(item.text, cleaned)) {
         correctionCallback({
           speaker: item.speaker,
@@ -571,6 +591,13 @@ async function processCorrectionQueue(): Promise<void> {
           text: cleaned,
           originalText: item.text,
         })
+        // Update sliding window with corrected text for future context
+        recentCorrectedSegments.push(cleaned)
+        if (recentCorrectedSegments.length > MAX_RECENT_CONTEXT) recentCorrectedSegments.shift()
+      } else if (cleaned && cleaned === item.text) {
+        // Unchanged but valid — still add to context window
+        recentCorrectedSegments.push(item.text)
+        if (recentCorrectedSegments.length > MAX_RECENT_CONTEXT) recentCorrectedSegments.shift()
       }
     } catch (err: any) {
       // Silently skip failed corrections — raw transcript is already displayed
@@ -592,18 +619,20 @@ async function drainCorrectionQueue(): Promise<void> {
   }
 }
 
-/** Reject corrections where more than 60% of words changed (LLM went off-script). */
+/** Reject corrections where too many words changed (LLM went off-script). */
 function isCorrectionTooFar(original: string, corrected: string): boolean {
   const origWords = original.toLowerCase().split(/\s+/)
   const corrWords = corrected.toLowerCase().split(/\s+/)
   if (origWords.length === 0) return true
+  // Short segments: domain corrections can change most words, so allow more latitude
+  if (origWords.length <= 5) return false
   const origSet = new Set(origWords)
   let kept = 0
   for (const w of corrWords) {
     if (origSet.has(w)) kept++
   }
   const ratio = kept / Math.max(origWords.length, corrWords.length)
-  return ratio < 0.4 // Less than 40% overlap → reject
+  return ratio < 0.25 // Less than 25% overlap → reject (relaxed from 40% for domain corrections)
 }
 
 function pcmToWav(pcm: Float32Array, sampleRate: number): Buffer {

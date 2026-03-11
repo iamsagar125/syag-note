@@ -423,17 +423,23 @@ export default function NoteDetailPage() {
                   const groups = groupTranscriptBySpeaker(filtered.map(({ line, originalIndex }) => ({ ...line, originalIndex })));
                   const searchRegex = transcriptSearch ? new RegExp(`(${transcriptSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi") : null;
                   const totalSaved = note.transcript.length;
-                  return groups.map((group) => {
+                  return groups.map((group, groupIdx) => {
                     const displayLabel = group.speaker === "You" ? "Me" : "Them";
                     const isNew = group.indices.some((i) => i >= totalSaved);
+                    const prevGroup = groupIdx > 0 ? groups[groupIdx - 1] : null;
+                    const showLabel = !prevGroup || prevGroup.speaker !== group.speaker;
                     return (
                       <div key={group.indices.join("-")} className={isNew ? "animate-fade-in" : ""}>
-                        <div className="flex items-center gap-1.5 mb-0.5">
-                          <div className="flex h-4 w-4 items-center justify-center rounded-full bg-secondary text-[8px] font-medium text-foreground">
-                            {displayLabel.charAt(0)}
+                        {showLabel ? (
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <div className="flex h-4 w-4 items-center justify-center rounded-full bg-secondary text-[8px] font-medium text-foreground">
+                              {displayLabel.charAt(0)}
+                            </div>
+                            <span className="text-[10px] font-medium text-foreground">{displayLabel}</span>
                           </div>
-                          <span className="text-[10px] font-medium text-foreground">{displayLabel}</span>
-                        </div>
+                        ) : (
+                          <div className="h-1" />
+                        )}
                         <p className="text-[12px] text-muted-foreground leading-relaxed pl-6">
                           {searchRegex ? (
                             group.text.split(searchRegex).map((part, j) =>

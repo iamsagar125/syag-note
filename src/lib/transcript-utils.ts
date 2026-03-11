@@ -6,7 +6,74 @@ export type TranscriptGroup = {
   indices: number[];
 };
 
-/** Group consecutive same-speaker transcript lines into blocks for continuous flow display. */
+/** Parse "m:ss" or "mm:ss" transcript timestamp to total seconds. */
+export function parseTimeToSeconds(time: string): number {
+  const parts = time.split(':');
+  if (parts.length !== 2) return 0;
+  const minutes = parseInt(parts[0], 10) || 0;
+  const seconds = parseInt(parts[1], 10) || 0;
+  return minutes * 60 + seconds;
+}
+
+/** When consecutive same-speaker chunks are ≥ this many seconds apart, start a new paragraph. */
+const PAUSE_THRESHOLD_SEC = 5;
+
+/** Maximum sentences per group before splitting into a new paragraph. */
+const MAX_SENTENCES_PER_GROUP = 5;
+
+/** Returns true if the gap between two timestamps exceeds the threshold. */
+function hasTimePause(timeEnd: string, timeStart: string, thresholdSec: number): boolean {
+  const endSec = parseTimeToSeconds(timeEnd);
+  const startSec = parseTimeToSeconds(timeStart);
+  return (startSec - endSec) >= thresholdSec;
+}
+
+/** Split groups that exceed max sentences into multiple groups with the same speaker. */
+function splitLongGroups(groups: TranscriptGroup[]): TranscriptGroup[] {
+  const result: TranscriptGroup[] = [];
+
+  for (const group of groups) {
+    const sentences = group.text.match(/[^.!?]*[.!?]+\s*/g);
+
+    // If we can't parse sentences or the group is short enough, keep as-is
+    if (!sentences || sentences.length <= MAX_SENTENCES_PER_GROUP) {
+      result.push(group);
+      continue;
+    }
+
+    // Split into chunks of MAX_SENTENCES_PER_GROUP sentences
+    for (let i = 0; i < sentences.length; i += MAX_SENTENCES_PER_GROUP) {
+      const chunk = sentences.slice(i, i + MAX_SENTENCES_PER_GROUP);
+      const text = chunk.join('').trim();
+      if (!text) continue;
+
+      // Distribute indices proportionally across sub-groups
+      const startRatio = i / sentences.length;
+      const endRatio = Math.min((i + MAX_SENTENCES_PER_GROUP) / sentences.length, 1);
+      const startIdx = Math.floor(startRatio * group.indices.length);
+      const endIdx = Math.ceil(endRatio * group.indices.length);
+      const indices = group.indices.slice(startIdx, Math.max(endIdx, startIdx + 1));
+
+      result.push({
+        speaker: group.speaker,
+        timeStart: i === 0 ? group.timeStart : group.timeEnd,
+        timeEnd: group.timeEnd,
+        text,
+        indices,
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Group consecutive same-speaker transcript lines into blocks for display.
+ * Breaks into new paragraphs on:
+ *  1. Speaker change
+ *  2. Time gap ≥ 5 seconds (natural speech pause)
+ *  3. More than 5 sentences in a single group (long monologue fallback)
+ */
 export function groupTranscriptBySpeaker(
   items: { speaker: string; time: string; text: string; originalIndex: number }[]
 ): TranscriptGroup[] {
@@ -23,7 +90,10 @@ export function groupTranscriptBySpeaker(
 
   for (let i = 1; i < items.length; i++) {
     const item = items[i];
-    if (item.speaker === current.speaker) {
+    const sameSpeaker = item.speaker === current.speaker;
+    const timePause = hasTimePause(current.timeEnd, item.time, PAUSE_THRESHOLD_SEC);
+
+    if (sameSpeaker && !timePause) {
       current.timeEnd = item.time;
       current.text = `${current.text} ${item.text.trim()}`.trim();
       current.indices.push(item.originalIndex);
@@ -39,5 +109,5 @@ export function groupTranscriptBySpeaker(
     }
   }
   groups.push(current);
-  return groups;
+  return splitLongGroups(groups);
 }
