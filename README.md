@@ -209,6 +209,8 @@ For day-to-day dev, use the commands in the [Run from source](#option-2-run-from
 
 **Lint:** `npm run lint`.
 
+**Dependencies:** The project uses jsdom ^24 and Vite ^6 for tests and build; `package.json` includes `overrides` for `glob` and `whatwg-encoding` to keep transitive deps updated and reduce deprecation/security warnings. Run `npm audit` to check for vulnerabilities.
+
 **Versioning:** Bump `version` in `package.json` before releasing (e.g. `1.0.3` → `1.0.4`).
 
 ---
