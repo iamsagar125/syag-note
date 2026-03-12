@@ -9,18 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            platform: mac
-          - os: windows-latest
-            platform: win
-          - os: ubuntu-latest
-            platform: linux
-    runs-on: ${{ matrix.os }}
+  build-mac:
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,7 +18,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
@@ -38,43 +28,23 @@ jobs:
         run: npm run build
 
       - name: Package
-        run: npx electron-builder --${{ matrix.platform }} --publish never
+        run: npx electron-builder --mac --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.platform }}
+          name: dist-mac
           path: dist/
 
   release:
-    needs: build
+    needs: build-mac
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
           name: dist-mac
-          path: dist-mac
-
-      - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-win
-          path: dist-win
-
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist-linux
-          path: dist-linux
-
-      - name: Merge artifacts
-        run: |
-          mkdir -p release
-          cp -a dist-mac/* release/ 2>/dev/null || true
-          cp -a dist-win/* release/ 2>/dev/null || true
-          cp -a dist-linux/* release/ 2>/dev/null || true
-          ls -la release/
+          path: release
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
