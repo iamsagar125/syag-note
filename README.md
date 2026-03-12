@@ -2,6 +2,8 @@
 
 AI-powered meeting notes and audio transcription for macOS. Record meetings with near real-time transcription (mic + system audio), “You” vs “Others” speaker labels, and AI summaries.
 
+**Privacy:** Installers contain no API keys or user data. Your keys, notes, and calendar stay on your machine (stored in the app’s user data directory).
+
 ---
 
 ## Tech stack
@@ -171,17 +173,21 @@ npm run dev:web
 
 ---
 
-## Build & DMG
+## Build & release
 
 ```bash
 # Build main + renderer
 npm run build
 
-# Package macOS app and DMG (arm64)
+# Package (mac by default; config in package.json "build")
 npm run package
 ```
 
-Output: **dist/Syag-{version}-arm64.dmg** (and `dist/mac-arm64/Syag.app`). Version comes from `package.json`. Config: **electron-builder.yml** (appId: `com.syag.notes`, productName: Syag, asar with unpack for better-sqlite3 and onnxruntime-node).
+Output: **dist/** (DMG/zip on macOS, NSIS/portable on Windows, AppImage on Linux). Version comes from `package.json`.
+
+**GitHub Releases:** Push a version tag (e.g. `v1.0.4`) to trigger the Release workflow: it builds on macOS, Windows, and Linux and attaches installers to the release. Users download from the repo’s Releases page; no API keys or data are bundled.
+
+**Updates preserve your data:** Installing a new DMG over an existing install (e.g. replacing Syag.app in Applications) keeps your notes, API keys, and settings. User data lives in `~/Library/Application Support/Syag` and is tied to the app identity, not the build—like an in-place update without OTA.
 
 ---
 
