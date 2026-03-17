@@ -123,6 +123,48 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
     }
   }, [persist]);
 
+  // Fetch events from Microsoft Calendar OAuth (if connected)
+  const fetchMicrosoftCalendar = useCallback(async (silent = false) => {
+    const api = getElectronAPI();
+    if (!api?.microsoft || !api?.keychain) return;
+    try {
+      const raw = await api.keychain.get("microsoft-calendar-config");
+      if (!raw) return;
+      const config = JSON.parse(raw);
+      let accessToken = config.accessToken;
+
+      // Refresh token if expired
+      if (config.expiresAt && Date.now() > config.expiresAt - 60_000) {
+        const refreshResult = await api.microsoft.calendarRefresh(config.clientId, config.refreshToken);
+        if (refreshResult.ok && refreshResult.accessToken) {
+          accessToken = refreshResult.accessToken;
+          config.accessToken = accessToken;
+          config.expiresAt = Date.now() + (refreshResult.expiresIn || 3600) * 1000;
+          await api.keychain.set("microsoft-calendar-config", JSON.stringify(config));
+        } else {
+          if (!silent) setError("Microsoft Calendar token expired — please reconnect in Settings");
+          return;
+        }
+      }
+
+      const result = await api.microsoft.calendarFetch(accessToken);
+      if (result.ok && result.events?.length) {
+        const mapped: CalendarEvent[] = result.events.map((e: any) => ({
+          id: `ms-${e.id}`,
+          title: e.title,
+          start: new Date(e.start),
+          end: new Date(e.end),
+          joinLink: e.joinLink,
+          location: e.location,
+          isAllDay: e.isAllDay,
+        }));
+        persist(mapped, "Microsoft Calendar");
+      }
+    } catch {
+      if (!silent) setError("Failed to fetch Microsoft Calendar events");
+    }
+  }, [persist]);
+
   // Load from localStorage on mount + start auto-refresh if URL source
   useEffect(() => {
     try {
@@ -140,10 +182,11 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
       if (feedUrl) {
         fetchAndParse(feedUrl, true);
       }
-      // Also try Google Calendar if connected
+      // Also try Google Calendar and Microsoft Calendar if connected
       fetchGoogleCalendar(true);
+      fetchMicrosoftCalendar(true);
     } catch { /* ignore corrupt data */ }
-  }, [fetchAndParse, fetchGoogleCalendar]);
+  }, [fetchAndParse, fetchGoogleCalendar, fetchMicrosoftCalendar]);
 
   // Set up auto-refresh interval for URL-based feeds and Google Calendar
   useEffect(() => {
@@ -153,15 +196,16 @@ export function CalendarProvider({ children }: { children: React.ReactNode }) {
         fetchAndParse(feedUrl, true);
       }, AUTO_REFRESH_INTERVAL);
     } else {
-      // If no ICS URL, still auto-refresh Google Calendar
+      // If no ICS URL, still auto-refresh Google and Microsoft Calendar
       refreshTimer.current = setInterval(() => {
         fetchGoogleCalendar(true);
+        fetchMicrosoftCalendar(true);
       }, AUTO_REFRESH_INTERVAL);
     }
     return () => {
       if (refreshTimer.current) clearInterval(refreshTimer.current);
     };
-  }, [icsSource, fetchAndParse, fetchGoogleCalendar]);
+  }, [icsSource, fetchAndParse, fetchGoogleCalendar, fetchMicrosoftCalendar]);
 
   const importFromFile = useCallback((content: string, name?: string) => {
     try {

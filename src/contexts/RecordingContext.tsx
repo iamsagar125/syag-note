@@ -180,6 +180,11 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const clearSession = useCallback(() => {
     setActiveSession(null);
+    setTranscriptLines([]);
+    setSttStatus('idle');
+    setSttErrorMessage(null);
+    setLastSuccessfulTranscriptTime(null);
+    setCaptureError(null);
     sessionScratchRef.current = {};
     if (api) {
       api.app.updateTrayMeetingInfo?.(null);
@@ -262,6 +267,25 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     setCaptureError(null);
     setSttStatus('idle');
     setSttErrorMessage(null);
+    setLastSuccessfulTranscriptTime(null);
+
+    // Clean up any lingering audio resources from a previous session
+    if (workletNodeRef.current) {
+      try { workletNodeRef.current.disconnect(); } catch {}
+      workletNodeRef.current = null;
+    }
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch {}
+      audioContextRef.current = null;
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach(t => t.stop());
+      micStreamRef.current = null;
+    }
+    if (systemStreamRef.current) {
+      systemStreamRef.current.getTracks().forEach(t => t.stop());
+      systemStreamRef.current = null;
+    }
 
     // Read the user-selected audio device from DB
     let preferredDeviceId: string | undefined;
@@ -271,11 +295,23 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     } catch {}
 
     try {
-      await api.recording.start({
+      // Force-stop any lingering backend recording before starting fresh
+      try { await api.recording.stop(); } catch {}
+
+      const started = await api.recording.start({
         sttModel: sttModel || '',
         meetingTitle: options?.meetingTitle,
         vocabulary: options?.vocabulary,
       });
+      if (started === false) {
+        console.warn('Backend recording failed to start (returned false). Retrying after stop...');
+        await api.recording.stop();
+        await api.recording.start({
+          sttModel: sttModel || '',
+          meetingTitle: options?.meetingTitle,
+          vocabulary: options?.vocabulary,
+        });
+      }
 
       const audioCtx = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = audioCtx;

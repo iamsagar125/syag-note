@@ -47,6 +47,58 @@ const MIGRATIONS: { version: number; up: string[] }[] = [
       `ALTER TABLE notes ADD COLUMN coaching_metrics TEXT`,
     ]
   },
+  {
+    version: 4,
+    up: [
+      `CREATE TABLE IF NOT EXISTS people (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT,
+        company TEXT,
+        role TEXT,
+        relationship TEXT,
+        first_seen TEXT,
+        last_seen TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+      `CREATE TABLE IF NOT EXISTS note_people (
+        note_id TEXT REFERENCES notes(id) ON DELETE CASCADE,
+        person_id TEXT REFERENCES people(id) ON DELETE CASCADE,
+        role TEXT NOT NULL DEFAULT 'attendee',
+        PRIMARY KEY (note_id, person_id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS commitments (
+        id TEXT PRIMARY KEY,
+        note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
+        text TEXT NOT NULL,
+        owner TEXT NOT NULL DEFAULT 'you',
+        assignee_id TEXT REFERENCES people(id) ON DELETE SET NULL,
+        due_date TEXT,
+        status TEXT NOT NULL DEFAULT 'open',
+        completed_at TEXT,
+        jira_issue_key TEXT,
+        jira_issue_url TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+      `CREATE TABLE IF NOT EXISTS topics (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL UNIQUE,
+        first_seen TEXT,
+        last_seen TEXT
+      )`,
+      `CREATE TABLE IF NOT EXISTS note_topics (
+        note_id TEXT REFERENCES notes(id) ON DELETE CASCADE,
+        topic_id TEXT REFERENCES topics(id) ON DELETE CASCADE,
+        PRIMARY KEY (note_id, topic_id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_note_people_person ON note_people(person_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_commitments_assignee ON commitments(assignee_id, status)`,
+      `CREATE INDEX IF NOT EXISTS idx_commitments_status ON commitments(status, due_date)`,
+      `CREATE INDEX IF NOT EXISTS idx_topics_label ON topics(label)`,
+    ]
+  },
 ]
 
 export function runMigrations(db: Database.Database): void {

@@ -123,6 +123,40 @@ type ElectronAPI = {
     calendarFetch: (accessToken: string) => Promise<{ ok: boolean; events: any[]; error?: string }>
     calendarRefresh: (clientId: string, refreshToken: string) => Promise<{ ok: boolean; accessToken?: string; expiresIn?: number; error?: string }>
   }
+  microsoft?: {
+    calendarAuth: (clientId: string) => Promise<{ ok: boolean; accessToken?: string; refreshToken?: string; expiresIn?: number; email?: string; error?: string }>
+    calendarFetch: (accessToken: string) => Promise<{ ok: boolean; events: any[]; error?: string }>
+    calendarRefresh: (clientId: string, refreshToken: string) => Promise<{ ok: boolean; accessToken?: string; expiresIn?: number; error?: string }>
+  }
+  memory?: {
+    people: {
+      getAll: () => Promise<any[]>
+      get: (id: string) => Promise<any | null>
+      upsert: (data: any) => Promise<any>
+      merge: (keepId: string, mergeId: string) => Promise<boolean>
+      getMeetings: (personId: string) => Promise<any[]>
+      forNote: (noteId: string) => Promise<any[]>
+      update: (id: string, data: { name?: string; company?: string; role?: string; relationship?: string }) => Promise<boolean>
+      unlinkFromNote: (noteId: string, personId: string) => Promise<boolean>
+      linkToNote: (noteId: string, personId: string, role?: string) => Promise<boolean>
+    }
+    commitments: {
+      getAll: (filters?: any) => Promise<any[]>
+      forNote: (noteId: string) => Promise<any[]>
+      getOpen: () => Promise<any[]>
+      add: (data: any) => Promise<any>
+      updateStatus: (id: string, status: string) => Promise<boolean>
+      update: (id: string, data: any) => Promise<boolean>
+    }
+    topics: {
+      getAll: () => Promise<any[]>
+      forNote: (noteId: string) => Promise<any[]>
+      addToNote: (noteId: string, label: string) => Promise<any>
+      unlinkFromNote: (noteId: string, topicId: string) => Promise<boolean>
+      updateLabel: (id: string, label: string) => Promise<boolean>
+    }
+    extractEntities: (data: { noteId: string; summary: any; transcript: any[]; model: string; calendarAttendees?: any[] }) => Promise<{ ok: boolean; peopleCount?: number; commitmentCount?: number; topicCount?: number; error?: string }>
+  }
   jira?: {
     testToken: (siteUrl: string, email: string, apiToken: string) => Promise<{ ok: boolean; displayName?: string; error?: string }>
     getProjects: (configJson: string) => Promise<any[]>

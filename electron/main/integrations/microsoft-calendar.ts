@@ -1,0 +1,84 @@
+/**
+ * Microsoft Graph Calendar API — fetch upcoming events.
+ */
+import { netFetch } from '../cloud/net-request'
+
+const GRAPH_CALENDAR_URL = 'https://graph.microsoft.com/v1.0/me/calendarview'
+
+export interface MicrosoftCalendarEvent {
+  id: string
+  title: string
+  start: string      // ISO datetime
+  end: string        // ISO datetime
+  joinLink?: string
+  location?: string
+  isAllDay: boolean
+}
+
+/**
+ * Fetch calendar events from Microsoft Graph API.
+ * @param accessToken - valid Microsoft Graph access token
+ * @param daysAhead  - number of days to look ahead (default 7)
+ */
+export async function fetchMicrosoftCalendarEvents(
+  accessToken: string,
+  daysAhead = 7
+): Promise<MicrosoftCalendarEvent[]> {
+  const now = new Date()
+  const end = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000)
+
+  const url = `${GRAPH_CALENDAR_URL}?startDateTime=${now.toISOString()}&endDateTime=${end.toISOString()}&$top=50&$orderby=start/dateTime&$select=id,subject,start,end,location,isAllDay,onlineMeeting,onlineMeetingUrl,body`
+
+  const { statusCode, data } = await netFetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+
+  if (statusCode !== 200) {
+    throw new Error(`Microsoft Calendar API error (${statusCode}): ${data.slice(0, 200)}`)
+  }
+
+  const result = JSON.parse(data)
+  const events: MicrosoftCalendarEvent[] = []
+
+  for (const evt of result.value || []) {
+    const joinLink = extractJoinLink(evt)
+    events.push({
+      id: evt.id,
+      title: evt.subject || 'Untitled',
+      start: evt.start?.dateTime ? new Date(evt.start.dateTime + 'Z').toISOString() : new Date().toISOString(),
+      end: evt.end?.dateTime ? new Date(evt.end.dateTime + 'Z').toISOString() : new Date().toISOString(),
+      joinLink,
+      location: evt.location?.displayName || undefined,
+      isAllDay: evt.isAllDay || false,
+    })
+  }
+
+  return events
+}
+
+/** Extract Teams/Zoom/Meet join link from event data */
+function extractJoinLink(evt: any): string | undefined {
+  // Primary: Teams online meeting URL
+  if (evt.onlineMeeting?.joinUrl) return evt.onlineMeeting.joinUrl
+  if (evt.onlineMeetingUrl) return evt.onlineMeetingUrl
+
+  // Fallback: scan location and body for meeting URLs
+  const searchText = [
+    evt.location?.displayName || '',
+    evt.body?.content || '',
+  ].join(' ')
+
+  const patterns = [
+    /https?:\/\/[^\s<>"']*teams\.microsoft\.com\/l\/meetup-join\/[^\s<>"']*/i,
+    /https?:\/\/[^\s<>"']*zoom\.us\/j\/[^\s<>"']*/i,
+    /https?:\/\/meet\.google\.com\/[^\s<>"']*/i,
+    /https?:\/\/[^\s<>"']*webex\.com\/[^\s<>"']*/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = searchText.match(pattern)
+    if (match) return match[0]
+  }
+
+  return undefined
+}

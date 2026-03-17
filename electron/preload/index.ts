@@ -212,6 +212,46 @@ const electronAPI = {
       ipcRenderer.invoke('google:calendar-refresh', clientId, refreshToken) as Promise<{ ok: boolean; accessToken?: string; expiresIn?: number; error?: string }>,
   },
 
+  microsoft: {
+    calendarAuth: (clientId: string) =>
+      ipcRenderer.invoke('microsoft:calendar-auth', clientId) as Promise<{ ok: boolean; accessToken?: string; refreshToken?: string; expiresIn?: number; email?: string; error?: string }>,
+    calendarFetch: (accessToken: string) =>
+      ipcRenderer.invoke('microsoft:calendar-fetch', accessToken) as Promise<{ ok: boolean; events: any[]; error?: string }>,
+    calendarRefresh: (clientId: string, refreshToken: string) =>
+      ipcRenderer.invoke('microsoft:calendar-refresh', clientId, refreshToken) as Promise<{ ok: boolean; accessToken?: string; expiresIn?: number; error?: string }>,
+  },
+
+  memory: {
+    people: {
+      getAll: () => ipcRenderer.invoke('memory:people-get-all'),
+      get: (id: string) => ipcRenderer.invoke('memory:people-get', id),
+      upsert: (data: any) => ipcRenderer.invoke('memory:people-upsert', data),
+      merge: (keepId: string, mergeId: string) => ipcRenderer.invoke('memory:people-merge', keepId, mergeId),
+      getMeetings: (personId: string) => ipcRenderer.invoke('memory:people-get-meetings', personId),
+      forNote: (noteId: string) => ipcRenderer.invoke('memory:people-for-note', noteId),
+      update: (id: string, data: any) => ipcRenderer.invoke('memory:people-update', id, data),
+      unlinkFromNote: (noteId: string, personId: string) => ipcRenderer.invoke('memory:people-unlink-from-note', noteId, personId),
+      linkToNote: (noteId: string, personId: string, role?: string) => ipcRenderer.invoke('memory:people-link-to-note', noteId, personId, role),
+    },
+    commitments: {
+      getAll: (filters?: any) => ipcRenderer.invoke('memory:commitments-get-all', filters),
+      forNote: (noteId: string) => ipcRenderer.invoke('memory:commitments-for-note', noteId),
+      getOpen: () => ipcRenderer.invoke('memory:commitments-open'),
+      add: (data: any) => ipcRenderer.invoke('memory:commitments-add', data),
+      updateStatus: (id: string, status: string) => ipcRenderer.invoke('memory:commitments-update-status', id, status),
+      update: (id: string, data: any) => ipcRenderer.invoke('memory:commitments-update', id, data),
+    },
+    topics: {
+      getAll: () => ipcRenderer.invoke('memory:topics-get-all'),
+      forNote: (noteId: string) => ipcRenderer.invoke('memory:topics-for-note', noteId),
+      addToNote: (noteId: string, label: string) => ipcRenderer.invoke('memory:topics-add-to-note', noteId, label),
+      unlinkFromNote: (noteId: string, topicId: string) => ipcRenderer.invoke('memory:topics-unlink-from-note', noteId, topicId),
+      updateLabel: (id: string, label: string) => ipcRenderer.invoke('memory:topics-update-label', id, label),
+    },
+    extractEntities: (data: { noteId: string; summary: any; transcript: any[]; model: string; calendarAttendees?: any[] }) =>
+      ipcRenderer.invoke('memory:extract-entities', data) as Promise<{ ok: boolean; peopleCount?: number; commitmentCount?: number; topicCount?: number; error?: string }>,
+  },
+
   jira: {
     testToken: (siteUrl: string, email: string, apiToken: string) =>
       ipcRenderer.invoke('jira:test-token', siteUrl, email, apiToken) as Promise<{ ok: boolean; displayName?: string; error?: string }>,

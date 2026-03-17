@@ -50,7 +50,7 @@ export function HomeShelf({
         {/* Coming up */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display-serif text-base text-foreground">Coming up</h2>
+            <h2 className="font-display text-base text-foreground">Next up</h2>
             {hasNotes && (
               <button
                 onClick={onQuickNote}

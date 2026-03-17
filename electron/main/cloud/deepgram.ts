@@ -15,7 +15,7 @@ export async function sttDeepgram(
   const model = MODEL_MAP[modelName] || 'nova-2'
   const params = new URLSearchParams({ model, language: 'en', smart_format: 'true' })
   if (vocabulary?.length) {
-    const keywords = vocabulary.slice(0, 100).map(t => `${encodeURIComponent(t)}:2`).join(',')
+    const keywords = vocabulary.slice(0, 100).map(t => `${encodeURIComponent(t)}:3`).join(',')
     params.set('keywords', keywords)
   }
   const url = `https://api.deepgram.com/v1/listen?${params.toString()}`

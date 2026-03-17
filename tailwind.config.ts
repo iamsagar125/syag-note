@@ -57,16 +57,16 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
-        sage: {
-          DEFAULT: "hsl(var(--sage))",
-          light: "hsl(var(--sage-light))",
+        indigo: {
+          DEFAULT: "hsl(var(--indigo))",
+          light: "hsl(var(--indigo-light))",
+          muted: "hsl(var(--indigo-muted))",
         },
-        warm: {
-          glow: "hsl(var(--warm-glow))",
-        },
-        espresso: "hsl(var(--espresso))",
-        parchment: "hsl(var(--parchment))",
-        cream: "hsl(var(--cream))",
+        slate: "hsl(var(--slate))",
+        surface: "hsl(var(--surface))",
+        canvas: "hsl(var(--canvas))",
+        recording: "hsl(var(--recording))",
+        "ai-active": "hsl(var(--ai-active))",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -100,9 +100,9 @@ export default {
       typography: {
         DEFAULT: {
           css: {
-            fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+            fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif",
             "h1, h2, h3, h4": {
-              fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+              fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif",
               fontWeight: "600",
             },
           },

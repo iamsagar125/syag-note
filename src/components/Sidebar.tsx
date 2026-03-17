@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileText, Search, Settings, Sparkles, FolderOpen, Users, Briefcase, Star, Archive, Plus, X, Check, Home, Trash2, PanelLeftClose, PanelLeft, ArrowLeft, BarChart3 } from "lucide-react";
+import { FileText, Search, Settings, Sparkles, FolderOpen, Users, Briefcase, Star, Archive, Plus, X, Check, Home, Trash2, PanelLeftClose, PanelLeft, ArrowLeft, BarChart3, CheckCircle2, Contact } from "lucide-react";
 import { SyagLogo } from "@/components/SyagLogo";
 import { cn } from "@/lib/utils";
 import { isElectron } from "@/lib/electron-api";
@@ -201,35 +201,69 @@ export function Sidebar() {
         </div>
       </div>
 
+      {/* Intelligence section */}
+      <div className="mt-4 px-3">
+        <div className="flex items-center px-2 mb-1">
+          <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">Intelligence</span>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <button
+            onClick={() => navigate("/ask")}
+            className={cn(
+              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
+              isActive("/ask")
+                ? "bg-secondary text-foreground font-medium border-l-2 border-primary -ml-[2px]"
+                : "text-sidebar-foreground hover:bg-secondary/60 hover:text-foreground"
+            )}
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Syag Chat
+          </button>
+          <button
+            onClick={() => navigate("/coaching")}
+            className={cn(
+              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
+              isActive("/coaching")
+                ? "bg-secondary text-foreground font-medium border-l-2 border-primary -ml-[2px]"
+                : "text-sidebar-foreground hover:bg-secondary/60 hover:text-foreground"
+            )}
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            Coaching
+          </button>
+          <button
+            onClick={() => navigate("/people")}
+            className={cn(
+              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
+              isActive("/people")
+                ? "bg-secondary text-foreground font-medium border-l-2 border-primary -ml-[2px]"
+                : "text-sidebar-foreground hover:bg-secondary/60 hover:text-foreground"
+            )}
+          >
+            <Contact className="h-3.5 w-3.5" />
+            People
+          </button>
+          <button
+            onClick={() => navigate("/commitments")}
+            className={cn(
+              "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
+              isActive("/commitments")
+                ? "bg-secondary text-foreground font-medium border-l-2 border-primary -ml-[2px]"
+                : "text-sidebar-foreground hover:bg-secondary/60 hover:text-foreground"
+            )}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Commitments
+          </button>
+        </div>
+      </div>
+
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Bottom controls */}
+      {/* Bottom — Calendar + Settings */}
       <div className="flex flex-col gap-0.5 px-3 pb-2">
-        <button
-          onClick={() => navigate("/ask")}
-          className={cn(
-            "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
-            isActive("/ask")
-              ? "bg-secondary text-foreground font-medium"
-              : "text-sidebar-foreground hover:bg-secondary/60 hover:text-foreground"
-          )}
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          Syag Chat
-        </button>
-        <button
-          onClick={() => navigate("/coaching")}
-          className={cn(
-            "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
-            isActive("/coaching")
-              ? "bg-secondary text-foreground font-medium"
-              : "text-sidebar-foreground hover:bg-secondary/60 hover:text-foreground"
-          )}
-        >
-          <BarChart3 className="h-3.5 w-3.5" />
-          Coaching
-        </button>
+        <div className="h-px bg-border mx-2 mb-1" />
         <button
           onClick={() => navigate("/calendar")}
           className={cn(

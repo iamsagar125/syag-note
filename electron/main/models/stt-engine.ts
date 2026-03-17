@@ -574,9 +574,12 @@ async function processWithMLXWhisper(wavBuffer: Buffer, customVocabulary?: strin
   try {
     writeFileSync(tmpFile, wavBuffer)
 
-    const prompt = customVocabulary
-      ? customVocabulary.split('\n').map(t => t.trim()).filter(Boolean).join(', ')
-      : ''
+    const promptParts: string[] = []
+    if (previousContext) promptParts.push(previousContext)
+    if (customVocabulary) {
+      promptParts.push(customVocabulary.split('\n').map(t => t.trim()).filter(Boolean).join(', '))
+    }
+    const prompt = promptParts.join(' ').slice(-500)
 
     const request = JSON.stringify({ audio_path: tmpFile, prompt }) + '\n'
 
@@ -1004,7 +1007,7 @@ function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string,
       '-f', audioPath,
       '--language', 'en',
       '-t', String(sttThreadCount),
-      '--beam-size', '5',
+      '--beam-size', '8',
       '--entropy-thold', '2.4',
       '--logprob-thold', '-0.5',
       '--no-speech-thold', '0.3',
@@ -1012,14 +1015,15 @@ function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string,
       '--max-len', '0',
       '--output-json',
       '--print-special', 'false',
-      '--no-context',
     ]
 
-    if (customVocabulary) {
-      const prompt = customVocabulary.trim()
-      if (prompt.length > 0) {
-        args.push('--prompt', prompt)
-      }
+    // Build prompt: previous context + custom vocabulary for continuity
+    const promptParts: string[] = []
+    if (previousContext) promptParts.push(previousContext)
+    if (customVocabulary?.trim()) promptParts.push(customVocabulary.trim())
+    const fullPrompt = promptParts.join(' ').slice(-500)
+    if (fullPrompt) {
+      args.push('--prompt', fullPrompt)
     }
 
     // Run at lower priority so it doesn't compete with foreground apps

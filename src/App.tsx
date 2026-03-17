@@ -25,6 +25,8 @@ import CoachingPage from "./pages/CoachingPage";
 import SettingsPage from "./pages/SettingsPage";
 import NoteDetailPage from "./pages/NoteDetailPage";
 import OnboardingPage from "./pages/OnboardingPage";
+import PeoplePage from "./pages/PeoplePage";
+import CommitmentsPage from "./pages/CommitmentsPage";
 import NotFound from "./pages/NotFound";
 import { TrayMenu } from "@/components/TrayMenu";
 import { MeetingDetectionHandler } from "@/components/MeetingDetectionHandler";
@@ -104,6 +106,8 @@ function AppContent() {
         } />
         <Route path="/calendar" element={<CalendarPage />} />
         <Route path="/coaching" element={<CoachingPage />} />
+        <Route path="/people" element={<PeoplePage />} />
+        <Route path="/commitments" element={<CommitmentsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/tray-preview" element={
           <div className="flex items-center justify-center min-h-screen bg-muted/50">

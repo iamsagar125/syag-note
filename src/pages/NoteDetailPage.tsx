@@ -9,6 +9,7 @@ import { useNotes, type SavedNote } from "@/contexts/NotesContext";
 import { useRecording } from "@/contexts/RecordingContext";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { Share2, MoreHorizontal, FileText, Hash, Calendar, Clock, EyeOff, Eye, Search, X, Check, ChevronDown, Loader2, Copy, Download, FileDown, BarChart3, BookOpen, MessageSquare } from "lucide-react";
+import { MeetingMetadata } from "@/components/MeetingMetadata";
 import { cn } from "@/lib/utils";
 import { groupTranscriptBySpeaker } from "@/lib/transcript-utils";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
@@ -423,6 +424,9 @@ export default function NoteDetailPage() {
                   )}
                 </div>
 
+                {/* People, Company, Tags */}
+                {id && <MeetingMetadata noteId={id} />}
+
                 {viewMode === "ai-notes" ? (
                   <>
                     {note.summary ? (
@@ -477,6 +481,7 @@ export default function NoteDetailPage() {
                   note.summary?.overview ? `Overview: ${note.summary.overview}` : '',
                   (note.transcript?.length || newLines.length) ? `Transcript:\n${[...note.transcript, ...newLines].map((t: any) => `[${t.time}] ${t.speaker}: ${t.text}`).join('\n')}` : '',
                 ].filter(Boolean).join('\n\n')}
+                coachingMetrics={note.coachingMetrics}
                 recordingState={recordingState}
                 elapsed={recordingState !== "stopped" ? formatElapsed(displayElapsed) : undefined}
                 transcriptVisible={transcriptVisible}

@@ -13,7 +13,7 @@ export interface VADSegment {
 // Tuned for meetings: lower threshold catches quieter speakers, longer silence avoids splitting mid-thought
 const VAD_THRESHOLD_DEFAULT = 0.45
 const MIN_SPEECH_DURATION_DEFAULT = 0.25
-const MIN_SILENCE_DURATION_DEFAULT = 0.5
+const MIN_SILENCE_DURATION_DEFAULT = 0.7
 const WINDOW_SIZE_SAMPLES = 512
 
 export interface VADOptions {
@@ -153,7 +153,7 @@ function probsToSegments(probs: number[], frameDuration: number, threshold: numb
   // Merge segments that are close together
   const merged: VADSegment[] = []
   for (const seg of segments) {
-    if (merged.length > 0 && seg.start - merged[merged.length - 1].end < 0.5) {
+    if (merged.length > 0 && seg.start - merged[merged.length - 1].end < 0.7) {
       merged[merged.length - 1].end = seg.end
     } else {
       merged.push({ ...seg })

@@ -19,9 +19,11 @@ const TRAY_SIZE = 44 // 44px @2x = 22pt on Retina
 const DOCK_SIZE = 1024
 const COPPER = '#C8956C' // warm copper from the monogram design
 
-// Compact S for menu bar (thinner, more padding — matches system icon weight)
+// Compact S for menu bar — bolder stroke for visibility at 22pt
 const TRAY_S_PATH = 'M 27 10 C 23 8, 17 9.5, 15.5 13 C 14 16.5, 16.5 19, 22 21 C 27.5 23, 30 25.5, 28.5 29.5 C 27 33.5, 22 35, 17 33'
-const TRAY_S_STROKE = 3.5
+const TRAY_S_STROKE = 4.5
+// Pure black — macOS template images use alpha channel only; macOS applies the right color
+const TRAY_TEMPLATE_COLOR = '#000000'
 
 // Bolder S for dock/app icon (displayed at larger sizes)
 const DOCK_S_PATH = 'M 29 6 C 23 4, 14 6, 12 12 C 10 18, 15 21, 22 23 C 29 25, 34 28, 32 34 C 30 40, 22 42, 15 39'
@@ -32,7 +34,7 @@ const DOCK_S_STROKE = 6
 async function generateTrayTemplate() {
   // Render the compact S monogram SVG — already black on transparent
   const svg = Buffer.from(`<svg width="${TRAY_SIZE}" height="${TRAY_SIZE}" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="${TRAY_S_PATH}" stroke="#000000" stroke-width="${TRAY_S_STROKE}" stroke-linecap="round" fill="none"/>
+    <path d="${TRAY_S_PATH}" stroke="${TRAY_TEMPLATE_COLOR}" stroke-width="${TRAY_S_STROKE}" stroke-linecap="round" fill="none"/>
   </svg>`)
 
   const templatePng = await sharp(svg)

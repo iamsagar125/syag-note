@@ -63,6 +63,23 @@ app.whenReady().then(async () => {
   ensureModelsDir()
   registerIPCHandlers()
 
+  // Use app icon in Dock for dev and local builds (packaged app also gets it from bundle)
+  if (process.platform === 'darwin' && app.dock) {
+    try {
+      // Try .icns first, fall back to PNG
+      const icnsPath = process.defaultApp
+        ? join(process.cwd(), 'electron', 'resources', 'icon.icns')
+        : join(process.resourcesPath, 'icon.icns')
+      const pngPath = process.defaultApp
+        ? join(process.cwd(), 'public', 'dock-icon-1024.png')
+        : join(process.resourcesPath, 'dock-icon-1024.png')
+      const iconPath = existsSync(icnsPath) ? icnsPath : existsSync(pngPath) ? pngPath : null
+      if (iconPath) app.dock.setIcon(iconPath)
+    } catch (e) {
+      console.warn('Could not set dock icon:', e)
+    }
+  }
+
   const mainWindow = createMainWindow()
   setupTray(mainWindow)
   startMeetingDetection(mainWindow)

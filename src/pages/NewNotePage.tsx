@@ -12,6 +12,7 @@ import {
   CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, FileText
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LiveCoachOverlay } from "@/components/LiveCoachOverlay";
 import { useFolders } from "@/contexts/FolderContext";
 import { useNotes } from "@/contexts/NotesContext";
 import { useRecording } from "@/contexts/RecordingContext";
@@ -182,6 +183,7 @@ export default function NewNotePage() {
   const [noteId, setNoteId] = useState(() => isReturning ? existingSessionId! : crypto.randomUUID());
   /** Granola-style: only start mic when user explicitly clicks Start. Prevents mic use when app opens or meeting detected. */
   const [userHasStartedCapture, setUserHasStartedCapture] = useState(false);
+  const [coachVisible, setCoachVisible] = useState(true);
   useEffect(() => {
     if (existingSessionId && noteId !== existingSessionId) setNoteId(existingSessionId);
   }, [existingSessionId]);
@@ -240,6 +242,16 @@ export default function NewNotePage() {
   const usingRealAudio = isElectron;
   const elapsedSeconds = activeSession?.elapsedSeconds ?? 0;
   const currentTranscript = usingRealAudio ? transcriptLines : fakeTranscriptLines.slice(0, visibleLines);
+
+  // Build context string for AskBar so it can answer questions about the live meeting
+  const askBarNoteContext = useMemo(() => {
+    const lines = (usingRealAudio ? transcriptLines : fakeTranscriptLines)
+      .map(l => `[${l.speaker}] ${l.text}`).join('\n');
+    const parts: string[] = [];
+    if (personalNotes.trim()) parts.push(`USER NOTES:\n${personalNotes.trim()}`);
+    if (lines) parts.push(`TRANSCRIPT:\n${lines}`);
+    return parts.join('\n\n') || undefined;
+  }, [usingRealAudio, transcriptLines, personalNotes]);
 
   // Tick every 10s while recording so we can show "no transcription for a while" after 45s
   const [, setStaleTick] = useState(0);
@@ -351,6 +363,21 @@ export default function NewNotePage() {
           summary: generatedSummary,
           folderId: selectedFolderId,
         });
+        // Auto-extract entities (people, commitments, topics) in background — fire and forget
+        if (api?.memory?.extractEntities && selectedAIModel) {
+          api.memory.extractEntities({
+            noteId: noteIdToSave,
+            summary: generatedSummary,
+            transcript: finalTranscript,
+            model: selectedAIModel,
+          }).then((result) => {
+            if (result.ok) {
+              console.log(`Entity extraction: ${result.peopleCount ?? 0} people, ${result.commitmentCount ?? 0} commitments, ${result.topicCount ?? 0} topics`);
+            }
+          }).catch((err) => {
+            console.error('Entity extraction failed (non-blocking):', err);
+          });
+        }
       } catch (err) {
         console.error('Failed to save note:', err);
         toast.error("Note could not be saved. Check console.");
@@ -1031,6 +1058,7 @@ export default function NewNotePage() {
               <AskBar
                 context="meeting"
                 meetingTitle={title || "New note"}
+                noteContext={askBarNoteContext}
                 recordingState={recordingState}
                 transcriptVisible={transcriptVisible}
                 hideTranscriptToggle={showSummaryControls}
@@ -1079,9 +1107,32 @@ export default function NewNotePage() {
             <div className="w-full lg:w-[36rem] flex-shrink-0 border-t lg:border-t-0 lg:border-l border-border bg-card/50 overflow-y-auto rounded-tl-2xl rounded-tr-2xl max-h-[45vh] lg:max-h-none">
               <div className="px-4 py-3 border-b border-border">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-[12px] font-medium uppercase tracking-wider text-foreground/80">
-                    {recordingState === "recording" ? "Live Transcript" : "Transcript"}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-medium uppercase tracking-wider text-foreground/80">
+                      {recordingState === "recording" ? "Live Transcript" : "Transcript"}
+                    </span>
+                    {(recordingState === "recording" || recordingState === "paused") && (
+                      <div className="flex items-center gap-1.5">
+                        {recordingState === "recording" ? (
+                          <span className="flex items-center gap-1 text-[10px] text-destructive">
+                            <span className="h-1.5 w-1.5 rounded-full bg-destructive animate-pulse" />
+                            REC
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <Pause className="h-2.5 w-2.5" />
+                            Paused
+                          </span>
+                        )}
+                        {activeSTTLabel && (
+                          <>
+                            <span className="text-[10px] text-muted-foreground/40">·</span>
+                            <span className="text-[10px] text-muted-foreground">{activeSTTLabel}</span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <div className="flex items-center gap-0.5">
                     {currentTranscript.length > 0 && (
                       <button
@@ -1138,8 +1189,8 @@ export default function NewNotePage() {
                   return groups.map((group, groupIdx) => {
                     const isMe = group.speaker === "You";
                     const displayLabel = isMe ? "Me" : "Them";
-                    const prevGroup = groupIdx > 0 ? groups[groupIdx - 1] : null;
-                    const showLabel = !prevGroup || prevGroup.speaker !== group.speaker;
+                    // Always show speaker label for clarity — especially after time-gap splits
+                    const showLabel = true;
                     return (
                       <div
                         key={group.indices.join("-")}
@@ -1217,19 +1268,6 @@ export default function NewNotePage() {
                     </p>
                   </div>
                 )}
-                {!transcriptSearch && recordingState === "recording" && (
-                  <div className="flex items-center gap-1.5 pt-1 animate-pulse">
-                    <div className="h-1 w-1 rounded-full bg-destructive" />
-                    <span className="text-[10px] text-muted-foreground">
-                      {usingRealAudio && isCapturing
-                        ? (usingWebSpeech ? "Listening (browser speech recognition)..." : "Listening to mic & system audio...")
-                        : "Listening..."}
-                    </span>
-                  </div>
-                )}
-                {!transcriptSearch && recordingState === "recording" && usingRealAudio && sttStatus === "processing" && (
-                  <p className="text-[10px] text-muted-foreground pt-0.5">Transcribing...</p>
-                )}
                 {!transcriptSearch && (recordingState === "recording" || recordingState === "paused") && sttStatus === "error" && sttErrorMessage && (
                   <p className="text-[10px] text-destructive pt-0.5" title={sttErrorMessage}>
                     STT error: {sttErrorMessage.length > 60 ? sttErrorMessage.slice(0, 57) + "…" : sttErrorMessage}
@@ -1240,22 +1278,6 @@ export default function NewNotePage() {
                     No transcription for a while. Check your STT model and connection.
                   </p>
                 )}
-                {!transcriptSearch && (recordingState === "recording" || recordingState === "paused") && activeSTTLabel && (
-                  <p className="text-[10px] text-muted-foreground pt-0.5">
-                    Transcription: {activeSTTLabel}. To change, pick another model in Settings and start or resume recording.
-                  </p>
-                )}
-                {!transcriptSearch && useLocalModels && (recordingState === "recording" || recordingState === "paused") && (
-                  <p className="text-[10px] text-muted-foreground pt-0.5">
-                    With local models, transcription and summaries stay on this device.
-                  </p>
-                )}
-                {!transcriptSearch && recordingState === "paused" && (
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <Pause className="h-2.5 w-2.5 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground">Paused</span>
-                  </div>
-                )}
                 {transcriptSearch && currentTranscript.filter(l => l.text.toLowerCase().includes(transcriptSearch.toLowerCase())).length === 0 && (
                   <p className="text-[11px] text-muted-foreground text-center py-4">No results found</p>
                 )}
@@ -1264,6 +1286,15 @@ export default function NewNotePage() {
             </div>
           )}
         </div>
+
+        {/* Live coaching overlay — shown during active recording */}
+        {recordingState === "recording" && transcriptLines.length > 0 && (
+          <LiveCoachOverlay
+            transcriptLines={transcriptLines}
+            visible={coachVisible}
+            onToggle={() => setCoachVisible(v => !v)}
+          />
+        )}
       </main>
     </div>
   );

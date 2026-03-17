@@ -46,6 +46,10 @@ let autoRepairInProgress = false
 const recentCorrectedSegments: string[] = []
 const MAX_RECENT_CONTEXT = 3
 
+/** Recent emitted transcripts for cross-channel deduplication. */
+const recentEmittedTexts: Array<{ text: string; time: number }> = []
+const DEDUP_WINDOW_MS = 12000 // 12s window — if same/similar text was emitted recently, skip
+
 // Near real-time: process every 2.5s when active, 15s when idle; 1s minimum buffer for faster first result
 const CHUNK_INTERVAL_ACTIVE_MS = 5000
 const CHUNK_INTERVAL_IDLE_MS = 15000
@@ -86,12 +90,14 @@ const WHISPER_PROMPT_MAX_CHARS = 800
 
 function buildWhisperPrompt(title: string, vocabulary: string[]): string {
   const parts: string[] = []
+  // Accent-aware priming: helps Whisper adapt to diverse English accents
+  parts.push('Speakers may have Indian, British, or other non-American English accents.')
   if (title?.trim()) parts.push(`${title.trim()} meeting.`)
   if (vocabulary.length > 0) {
     const terms = vocabulary.slice(0, 35).join(', ')
     parts.push(`Discussion about ${terms}.`)
   }
-  const raw = parts.join(' ') || 'Meeting transcription.'
+  const raw = parts.join(' ')
   return raw.length <= WHISPER_PROMPT_MAX_CHARS ? raw : raw.slice(0, WHISPER_PROMPT_MAX_CHARS).trim()
 }
 
@@ -118,6 +124,7 @@ export async function startRecording(
   consecutiveLocalSTTErrors = 0
   localSTTBackoffUntil = 0
   autoRepairInProgress = false
+  recentEmittedTexts.length = 0
   audioBuffers[0].length = 0
   audioBuffers[1].length = 0
   recordingStartTime = Date.now()
@@ -421,6 +428,26 @@ async function processBufferedAudio(): Promise<void> {
 
       const filtered = filterHallucinatedTranscript(sttResult.text)
       if (filtered) {
+        // Cross-channel dedup: skip if same/very similar text was emitted recently
+        const now = Date.now()
+        const filteredNorm = filtered.toLowerCase().replace(/[,.\-!?\s]+/g, ' ').trim()
+        // Prune old entries
+        while (recentEmittedTexts.length > 0 && now - recentEmittedTexts[0].time > DEDUP_WINDOW_MS) {
+          recentEmittedTexts.shift()
+        }
+        const isDuplicate = recentEmittedTexts.some(entry => {
+          // Exact match or one is a substring of the other (handles partial overlap)
+          return entry.text === filteredNorm
+            || filteredNorm.includes(entry.text)
+            || entry.text.includes(filteredNorm)
+        })
+        if (isDuplicate) {
+          isProcessing = false
+          statusCallback?.({ state: 'stt-idle' })
+          continue
+        }
+        recentEmittedTexts.push({ text: filteredNorm, time: now })
+
         lastSpeechTime = Date.now()
         const time = formatTimestamp(chunkStartSec)
         transcriptCallback({ speaker, time, text: filtered, words: sttResult.words?.length ? sttResult.words : undefined })
@@ -534,24 +561,40 @@ function formatTimestamp(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-/** Collapse repeated phrases to one occurrence so we keep content instead of dropping. */
+/** Collapse repeated phrases/words to one occurrence so we keep content instead of dropping. */
 function collapseRepetitions(text: string): string {
   let out = text.trim()
-  // Sentence-level: drop duplicate consecutive sentences (keep first)
+
+  // 1. Word-level stutter: "Oh, Oh, Oh, Oh" → "Oh" / "you you you you" → "you"
+  //    Match a word (with optional trailing comma) repeated 2+ times consecutively
+  out = out.replace(/\b(\w+),?\s+(?:\1,?\s+){1,}\1\b/gi, '$1')
+
+  // 2. Comma-separated repeats: "member, member, member" → "member"
+  out = out.replace(/\b(\w+)(?:\s*,\s*\1){2,}\b/gi, '$1')
+
+  // 3. Short phrase repeats (2-3 words): "yeah yeah yeah" / "right right right"
+  out = out.replace(/\b((?:\w+\s+){1,2}\w+)[,.]?\s+(?:\1[,.]?\s+){1,}/gi, '$1')
+
+  // 4. Sentence-level: drop duplicate consecutive sentences (keep first)
   const sentences = out.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean)
   const seen = new Set<string>()
   const kept: string[] = []
   for (const s of sentences) {
-    const norm = s.toLowerCase()
+    const norm = s.toLowerCase().replace(/[,.\s]+/g, ' ').trim()
     if (norm && !seen.has(norm)) {
       seen.add(norm)
       kept.push(s)
     }
   }
   out = kept.join(' ') || out
-  // Phrase repetition: same 10+ char phrase 3+ times → keep once
+
+  // 5. Phrase repetition: same 10+ char phrase 3+ times → keep once
   out = out.replace(/(.{10,}?)(\s+\1){2,}/g, '$1')
-  return out.trim()
+
+  // 6. Clean up leftover double spaces / commas
+  out = out.replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').trim()
+
+  return out
 }
 
 /** Capitalize first letter of each sentence and " i " → " I ". */
@@ -591,21 +634,32 @@ function filterHallucinatedTranscript(text: string): string | null {
   }
 
   // Entropy check: if text is mostly repeated words, it's hallucination
-  const wordList = collapsed.toLowerCase().split(/\s+/)
+  const wordList = collapsed.toLowerCase().replace(/[,.\-!?]/g, '').split(/\s+/).filter(Boolean)
   const uniqueWords = new Set(wordList)
-  if (wordList.length > 5 && uniqueWords.size / wordList.length < 0.3) {
+  if (wordList.length > 4 && uniqueWords.size / wordList.length < 0.4) {
     return null
   }
 
-  // Entire segment is only repeated short phrase (2–4 words 3+ times)
+  // Single word repeated (after collapse): "Oh" or just filler
+  if (wordList.length <= 2 && collapsed.length < 5) {
+    return null
+  }
+
+  // Entire segment is only repeated short phrase (2–4 words repeated 2+ times)
   const words = collapsed.split(/\s+/)
-  if (words.length >= 6) {
-    for (let len = 2; len <= 4; len++) {
-      for (let i = 0; i <= words.length - len * 3; i++) {
-        const chunk = words.slice(i, i + len).join(' ').toLowerCase()
-        const next1 = words.slice(i + len, i + len * 2).join(' ').toLowerCase()
-        const next2 = words.slice(i + len * 2, i + len * 3).join(' ').toLowerCase()
-        if (chunk === next1 && chunk === next2) return null
+  if (words.length >= 4) {
+    for (let len = 1; len <= 4; len++) {
+      for (let i = 0; i <= words.length - len * 2; i++) {
+        const chunk = words.slice(i, i + len).join(' ').toLowerCase().replace(/[,.]/g, '')
+        const next1 = words.slice(i + len, i + len * 2).join(' ').toLowerCase().replace(/[,.]/g, '')
+        if (chunk === next1 && i + len * 2 >= words.length - 1) {
+          // The rest of the segment is just this phrase repeated
+          return null
+        }
+        if (words.length >= len * 3) {
+          const next2 = words.slice(i + len * 2, i + len * 3).join(' ').toLowerCase().replace(/[,.]/g, '')
+          if (chunk === next1 && chunk === next2) return null
+        }
       }
     }
   }

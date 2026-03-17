@@ -474,6 +474,32 @@ export function registerIPCHandlers(): void {
     }
   })
 
+  // --- Microsoft Teams / Outlook Calendar OAuth ---
+  ipcMain.handle('microsoft:calendar-auth', async (_e, clientId: string) => {
+    try {
+      const { startMicrosoftOAuth } = await import('./integrations/microsoft-auth')
+      return startMicrosoftOAuth(clientId)
+    } catch (err: any) {
+      return { ok: false, error: err.message }
+    }
+  })
+  ipcMain.handle('microsoft:calendar-fetch', async (_e, accessToken: string) => {
+    try {
+      const { fetchMicrosoftCalendarEvents } = await import('./integrations/microsoft-calendar')
+      return fetchMicrosoftCalendarEvents(accessToken)
+    } catch (err: any) {
+      return { ok: false, events: [], error: err.message }
+    }
+  })
+  ipcMain.handle('microsoft:calendar-refresh', async (_e, clientId: string, refreshToken: string) => {
+    try {
+      const { refreshMicrosoftToken } = await import('./integrations/microsoft-auth')
+      return refreshMicrosoftToken(clientId, refreshToken)
+    } catch (err: any) {
+      return { ok: false, error: err.message }
+    }
+  })
+
   // --- Jira ---
   ipcMain.handle('jira:test-token', async (_e, siteUrl: string, email: string, apiToken: string) => {
     const { testJiraTokenConnection } = await import('./integrations/jira-auth')
@@ -502,6 +528,102 @@ export function registerIPCHandlers(): void {
   ipcMain.handle('jira:get-issue', async (_e, configJson: string, issueKey: string) => {
     const { getJiraIssue } = await import('./integrations/jira-api')
     return getJiraIssue(JSON.parse(configJson), issueKey)
+  })
+
+  // --- Memory (People, Commitments, Topics) ---
+  ipcMain.handle('memory:people-get-all', async () => {
+    const { getAllPeople } = await import('./memory/people-store')
+    return getAllPeople()
+  })
+  ipcMain.handle('memory:people-get', async (_e, id: string) => {
+    const { getPerson } = await import('./memory/people-store')
+    return getPerson(id)
+  })
+  ipcMain.handle('memory:people-upsert', async (_e, data: any) => {
+    const { upsertPerson } = await import('./memory/people-store')
+    return upsertPerson(data)
+  })
+  ipcMain.handle('memory:people-merge', async (_e, keepId: string, mergeId: string) => {
+    const { mergePeople } = await import('./memory/people-store')
+    return mergePeople(keepId, mergeId)
+  })
+  ipcMain.handle('memory:people-get-meetings', async (_e, personId: string) => {
+    const { getPersonMeetings } = await import('./memory/people-store')
+    return getPersonMeetings(personId)
+  })
+  ipcMain.handle('memory:people-for-note', async (_e, noteId: string) => {
+    const { getNotePeople } = await import('./memory/people-store')
+    return getNotePeople(noteId)
+  })
+  ipcMain.handle('memory:commitments-get-all', async (_e, filters?: any) => {
+    const { getAllCommitments } = await import('./memory/commitment-store')
+    return getAllCommitments(filters)
+  })
+  ipcMain.handle('memory:commitments-for-note', async (_e, noteId: string) => {
+    const { getCommitmentsForNote } = await import('./memory/commitment-store')
+    return getCommitmentsForNote(noteId)
+  })
+  ipcMain.handle('memory:commitments-open', async () => {
+    const { getOpenCommitments } = await import('./memory/commitment-store')
+    return getOpenCommitments()
+  })
+  ipcMain.handle('memory:commitments-add', async (_e, data: any) => {
+    const { addCommitment } = await import('./memory/commitment-store')
+    return addCommitment(data)
+  })
+  ipcMain.handle('memory:commitments-update-status', async (_e, id: string, status: string) => {
+    const { updateCommitmentStatus } = await import('./memory/commitment-store')
+    return updateCommitmentStatus(id, status as any)
+  })
+  ipcMain.handle('memory:commitments-update', async (_e, id: string, data: any) => {
+    const { updateCommitment } = await import('./memory/commitment-store')
+    return updateCommitment(id, data)
+  })
+  ipcMain.handle('memory:people-update', async (_e, id: string, data: any) => {
+    const { updatePerson } = await import('./memory/people-store')
+    return updatePerson(id, data)
+  })
+  ipcMain.handle('memory:people-unlink-from-note', async (_e, noteId: string, personId: string) => {
+    const { unlinkPersonFromNote } = await import('./memory/people-store')
+    return unlinkPersonFromNote(noteId, personId)
+  })
+  ipcMain.handle('memory:people-link-to-note', async (_e, noteId: string, personId: string, role?: string) => {
+    const { linkPersonToNote } = await import('./memory/people-store')
+    linkPersonToNote(noteId, personId, role)
+    return true
+  })
+  ipcMain.handle('memory:topics-get-all', async () => {
+    const { getAllTopics } = await import('./memory/topic-store')
+    return getAllTopics()
+  })
+  ipcMain.handle('memory:topics-for-note', async (_e, noteId: string) => {
+    const { getNoteTopics } = await import('./memory/topic-store')
+    return getNoteTopics(noteId)
+  })
+  ipcMain.handle('memory:topics-add-to-note', async (_e, noteId: string, label: string) => {
+    const { upsertTopic, linkTopicToNote } = await import('./memory/topic-store')
+    const topic = upsertTopic(label)
+    linkTopicToNote(noteId, topic.id)
+    return topic
+  })
+  ipcMain.handle('memory:topics-unlink-from-note', async (_e, noteId: string, topicId: string) => {
+    const { unlinkTopicFromNote } = await import('./memory/topic-store')
+    return unlinkTopicFromNote(noteId, topicId)
+  })
+  ipcMain.handle('memory:topics-update-label', async (_e, id: string, label: string) => {
+    const { updateTopicLabel } = await import('./memory/topic-store')
+    return updateTopicLabel(id, label)
+  })
+  ipcMain.handle('memory:extract-entities', async (_e, data: { noteId: string; summary: any; transcript: any[]; model: string; calendarAttendees?: any[] }) => {
+    try {
+      const { extractEntities, storeExtractedEntities } = await import('./memory/entity-extractor')
+      const entities = await extractEntities(data.summary, data.transcript, data.model, data.calendarAttendees?.map((a: any) => a.email).filter(Boolean))
+      const result = await storeExtractedEntities(data.noteId, entities, data.calendarAttendees)
+      return { ok: true, ...result }
+    } catch (err: any) {
+      console.error('[memory:extract-entities]', err)
+      return { ok: false, error: err.message || 'Entity extraction failed' }
+    }
   })
 
   // --- App ---

@@ -1,0 +1,133 @@
+import { randomUUID } from 'crypto'
+import { getDb } from '../storage/database'
+
+function levenshteinDistance(a: string, b: string): number {
+  const m = a.length
+  const n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
+  for (let i = 0; i <= m; i++) dp[i][0] = i
+  for (let j = 0; j <= n; j++) dp[0][j] = j
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+    }
+  }
+  return dp[m][n]
+}
+
+export function getAllPeople(): any[] {
+  return getDb().prepare('SELECT * FROM people ORDER BY last_seen DESC').all() as any[]
+}
+
+export function getPerson(id: string): any | null {
+  return getDb().prepare('SELECT * FROM people WHERE id = ?').get(id) as any ?? null
+}
+
+export function upsertPerson(data: { name: string; email?: string; company?: string; role?: string; relationship?: string }): any {
+  const db = getDb()
+  const now = new Date().toISOString()
+
+  // Email-first matching
+  if (data.email) {
+    const existing = db.prepare('SELECT * FROM people WHERE email = ?').get(data.email) as any
+    if (existing) {
+      const fields: string[] = []
+      const values: any[] = []
+      if (data.name) { fields.push('name = ?'); values.push(data.name) }
+      if (data.company !== undefined) { fields.push('company = ?'); values.push(data.company) }
+      if (data.role !== undefined) { fields.push('role = ?'); values.push(data.role) }
+      if (data.relationship !== undefined) { fields.push('relationship = ?'); values.push(data.relationship) }
+      fields.push('last_seen = ?'); values.push(now)
+      values.push(existing.id)
+      db.prepare(`UPDATE people SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+      return getPerson(existing.id)
+    }
+  }
+
+  // Fuzzy name matching
+  if (data.name.length > 3) {
+    const allPeople = db.prepare('SELECT * FROM people').all() as any[]
+    const nameLower = data.name.toLowerCase()
+    for (const person of allPeople) {
+      if (levenshteinDistance(nameLower, person.name.toLowerCase()) <= 3) {
+        db.prepare('UPDATE people SET last_seen = ? WHERE id = ?').run(now, person.id)
+        return getPerson(person.id)
+      }
+    }
+  }
+
+  // Create new
+  const id = randomUUID()
+  db.prepare(`
+    INSERT INTO people (id, name, email, company, role, relationship, first_seen, last_seen)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, data.name, data.email ?? null, data.company ?? null, data.role ?? null, data.relationship ?? null, now, now)
+  return getPerson(id)
+}
+
+export function mergePeople(keepId: string, mergeId: string): boolean {
+  const db = getDb()
+  const merge = db.transaction(() => {
+    // Re-link note_people rows, skip duplicates
+    const existing = db.prepare('SELECT note_id FROM note_people WHERE person_id = ?').all(keepId) as any[]
+    const existingNoteIds = new Set(existing.map((r: any) => r.note_id))
+    const toMerge = db.prepare('SELECT note_id, role FROM note_people WHERE person_id = ?').all(mergeId) as any[]
+    for (const row of toMerge) {
+      if (!existingNoteIds.has(row.note_id)) {
+        db.prepare('INSERT INTO note_people (note_id, person_id, role) VALUES (?, ?, ?)').run(row.note_id, keepId, row.role)
+      }
+    }
+    // Re-link commitments
+    db.prepare('UPDATE commitments SET assignee_id = ? WHERE assignee_id = ?').run(keepId, mergeId)
+    // Delete merged person (cascade deletes their note_people rows)
+    db.prepare('DELETE FROM people WHERE id = ?').run(mergeId)
+  })
+  merge()
+  return true
+}
+
+export function getPersonMeetings(personId: string): any[] {
+  return getDb().prepare(`
+    SELECT n.id, n.title, n.date, n.time, n.duration, n.time_range, np.role
+    FROM notes n
+    JOIN note_people np ON np.note_id = n.id
+    WHERE np.person_id = ?
+    ORDER BY n.date DESC, n.time DESC
+  `).all(personId) as any[]
+}
+
+export function linkPersonToNote(noteId: string, personId: string, role?: string): void {
+  getDb().prepare(`
+    INSERT OR IGNORE INTO note_people (note_id, person_id, role) VALUES (?, ?, ?)
+  `).run(noteId, personId, role ?? 'attendee')
+}
+
+export function getNotePeople(noteId: string): any[] {
+  return getDb().prepare(`
+    SELECT p.*, np.role as meeting_role
+    FROM people p
+    JOIN note_people np ON np.person_id = p.id
+    WHERE np.note_id = ?
+  `).all(noteId) as any[]
+}
+
+export function updatePerson(id: string, data: { name?: string; company?: string; role?: string; relationship?: string }): boolean {
+  const db = getDb()
+  const fields: string[] = []
+  const values: any[] = []
+  if (data.name !== undefined) { fields.push('name = ?'); values.push(data.name) }
+  if (data.company !== undefined) { fields.push('company = ?'); values.push(data.company || null) }
+  if (data.role !== undefined) { fields.push('role = ?'); values.push(data.role || null) }
+  if (data.relationship !== undefined) { fields.push('relationship = ?'); values.push(data.relationship || null) }
+  if (fields.length === 0) return false
+  values.push(id)
+  db.prepare(`UPDATE people SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  return true
+}
+
+export function unlinkPersonFromNote(noteId: string, personId: string): boolean {
+  const result = getDb().prepare('DELETE FROM note_people WHERE note_id = ? AND person_id = ?').run(noteId, personId)
+  return (result as any).changes > 0
+}
