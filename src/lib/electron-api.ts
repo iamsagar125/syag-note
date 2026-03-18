@@ -83,12 +83,10 @@ type ElectronAPI = {
     set: (service: string, value: string) => Promise<boolean>
     delete: (service: string) => Promise<boolean>
   }
-  copart: {
-    test: () => Promise<{ ok: boolean; error?: string }>
-    listModels?: () => Promise<{ models: { id: string }[]; sttModels: { id: string }[] }>
-  }
   app: {
     getVersion: () => Promise<string>
+    getOptionalProviders: () => Promise<{ id: string; name: string; icon: string; supportsStt?: boolean }[]>
+    invokeOptionalProvider: (providerId: string, method: 'test' | 'listModels') => Promise<any>
     getPlatform: () => string
     /** Fetch URL from main process (bypasses CORS for calendar ICS). */
     fetchUrl?: (url: string) => Promise<{ ok: boolean; status: number; body: string }>

@@ -1,13 +1,49 @@
 import { getSetting } from '../storage/database'
 import { chatOpenAI, sttOpenAI } from './openai'
 import { chatAnthropic } from './anthropic'
-import { chatCopart, sttCopart, listCopartModels, isCopartSttModel } from './copart'
 import { chatGoogle } from './google'
 import { sttDeepgram } from './deepgram'
 import { sttAssemblyAI } from './assemblyai'
 import { chatGroq, sttGroq } from './groq'
 
-function getApiKey(providerId: string): string {
+export type OptionalProviderMeta = {
+  name: string
+  icon: string
+  supportsStt?: boolean
+}
+
+export type OptionalProviderHandlers = {
+  chat: (messages: { role: string; content: string }[], modelName: string, apiKey: string, onChunk?: (chunk: { text: string; done: boolean }) => void) => Promise<string>
+  stt?: (wavBuffer: Buffer, modelName: string, apiKey: string) => Promise<string>
+  listModels?: (apiKey: string) => Promise<{ models: { id: string }[]; sttModels: { id: string }[] }>
+  test?: () => Promise<{ ok: boolean; error?: string }>
+  meta: OptionalProviderMeta
+}
+
+const optionalProviders = new Map<string, OptionalProviderHandlers>()
+
+export function registerOptionalProvider(providerId: string, handlers: OptionalProviderHandlers): void {
+  optionalProviders.set(providerId, handlers)
+}
+
+export function getOptionalProviderIds(): string[] {
+  return Array.from(optionalProviders.keys())
+}
+
+export function getOptionalProviders(): { id: string; name: string; icon: string; supportsStt?: boolean }[] {
+  return Array.from(optionalProviders.entries()).map(([id, h]) => ({
+    id,
+    name: h.meta?.name ?? id,
+    icon: h.meta?.icon ?? '🔶',
+    supportsStt: h.meta?.supportsStt,
+  }))
+}
+
+export function getOptionalProviderHandlers(providerId: string): OptionalProviderHandlers | undefined {
+  return optionalProviders.get(providerId)
+}
+
+export function getApiKey(providerId: string): string {
   const { safeStorage } = require('electron')
   const { readFileSync, existsSync } = require('fs')
   const { join } = require('path')
@@ -45,6 +81,12 @@ export async function routeLLM(
   const [providerId, ...rest] = model.split(':')
   const modelName = rest.join(':')
 
+  const optional = optionalProviders.get(providerId)
+  if (optional?.chat) {
+    const apiKey = getApiKey(providerId)
+    return optional.chat(messages, modelName, apiKey, onChunk)
+  }
+
   const apiKey = getApiKey(providerId)
 
   switch (providerId) {
@@ -52,8 +94,6 @@ export async function routeLLM(
       return chatOpenAI(messages, modelName, apiKey, onChunk)
     case 'anthropic':
       return chatAnthropic(messages, modelName, apiKey, onChunk)
-    case 'copart':
-      return chatCopart(messages, modelName, apiKey, onChunk)
     case 'google':
       return chatGoogle(messages, modelName, apiKey, onChunk)
     case 'groq':
@@ -79,6 +119,12 @@ export async function routeSTT(wavBuffer: Buffer, model: string, vocabulary?: st
     throw new Error('Invalid STT model. Choose a cloud provider (e.g. Deepgram) in Settings > AI Models.')
   }
 
+  const optional = optionalProviders.get(providerId)
+  if (optional?.stt) {
+    const apiKey = getApiKey(providerId)
+    return optional.stt(wavBuffer, modelName, apiKey)
+  }
+
   const apiKey = getApiKey(providerId)
 
   switch (providerId) {
@@ -90,49 +136,8 @@ export async function routeSTT(wavBuffer: Buffer, model: string, vocabulary?: st
       return sttAssemblyAI(wavBuffer, apiKey)
     case 'groq':
       return sttGroq(wavBuffer, apiKey, prompt)
-    case 'copart':
-      return sttCopart(wavBuffer, modelName, apiKey)
     default:
       throw new Error(`Unknown STT provider: ${providerId}`)
-  }
-}
-
-/**
- * Test Copart Genie API key by sending a minimal chat request.
- * Returns { ok: true } or { ok: false, error: string }.
- * Common failures: no key in Settings; "Invalid API key" (401); wrong base URL or model ID (4xx/5xx from genie.copart.com).
- */
-export async function testCopartConnection(): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const apiKey = getApiKey('copart')
-    await chatCopart(
-      [{ role: 'user', content: 'Reply with exactly: OK' }],
-      'Claude Sonnet 4',
-      apiKey
-    )
-    return { ok: true }
-  } catch (err: any) {
-    const message = err?.message ?? String(err)
-    return { ok: false, error: message }
-  }
-}
-
-/**
- * List available models from Copart Genie API.
- * Returns { models: CopartModel[], sttModels: CopartModel[] } or empty arrays on error.
- */
-export async function listCopartGenieModels(): Promise<{
-  models: { id: string }[]
-  sttModels: { id: string }[]
-}> {
-  try {
-    const apiKey = getApiKey('copart')
-    const all = await listCopartModels(apiKey)
-    const sttModels = all.filter((m) => isCopartSttModel(m.id))
-    const models = all.filter((m) => !isCopartSttModel(m.id))
-    return { models, sttModels }
-  } catch {
-    return { models: [], sttModels: [] }
   }
 }
 

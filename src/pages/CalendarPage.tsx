@@ -25,7 +25,7 @@ function getStartDayOffset(year: number, month: number) {
 
 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-/** Derive a short label from calendar URL for display (e.g. "Outlook - Copart.com"). */
+/** Derive a short label from calendar URL for display (e.g. "Outlook - work.example.com"). */
 function getSyncLabel(urlOrSource: string): string {
   if (!urlOrSource) return "Calendar";
   try {

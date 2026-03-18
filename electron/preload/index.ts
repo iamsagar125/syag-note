@@ -127,14 +127,12 @@ const electronAPI = {
     delete: (service: string) => ipcRenderer.invoke('keychain:delete', service),
   },
 
-  copart: {
-    test: () => ipcRenderer.invoke('copart:test') as Promise<{ ok: boolean; error?: string }>,
-    listModels: () =>
-      ipcRenderer.invoke('copart:listModels') as Promise<{ models: { id: string }[]; sttModels: { id: string }[] }>,
-  },
-
   app: {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
+    getOptionalProviders: () =>
+      ipcRenderer.invoke('app:get-optional-providers') as Promise<{ id: string; name: string; icon: string; supportsStt?: boolean }[]>,
+    invokeOptionalProvider: (providerId: string, method: 'test' | 'listModels') =>
+      ipcRenderer.invoke(`${providerId}:${method}`) as Promise<any>,
     /** Fetch URL from main process (bypasses CORS for calendar ICS, e.g. Outlook). Returns { ok, status, body }. */
     fetchUrl: (url: string) =>
       ipcRenderer.invoke('fetch:url', url) as Promise<{ ok: boolean; status: number; body: string }>,

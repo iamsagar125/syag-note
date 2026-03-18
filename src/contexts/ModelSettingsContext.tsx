@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback } from "react";
 import { toast } from "sonner";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 
@@ -8,37 +8,13 @@ export type ModelProvider = {
   models: string[];
   icon: string;
   sttOnly?: boolean;
-  /** Same API key can be used for STT (e.g. Copart Genie). */
+  /** Same API key can be used for STT when the provider supports it. */
   supportsStt?: boolean;
 };
 
 export const enterpriseProviders: ModelProvider[] = [
   { id: "openai", name: "OpenAI", models: ["GPT-4o", "GPT-4o mini", "GPT-4 Turbo", "o1-preview"], icon: "🟢" },
   { id: "anthropic", name: "Anthropic (Claude)", models: ["Claude 4 Sonnet", "Claude 4 Opus", "Claude 3.5 Haiku"], icon: "🟤" },
-  {
-    id: "copart",
-    name: "Copart Genie",
-    models: [
-      "GPT-4.1",
-      "GPT-4o",
-      "GPT-4o mini",
-      "GPT-5",
-      "GPT-5 mini",
-      "Gemini 2.0 Flash",
-      "Gemini 2.5 Flash",
-      "Gemini 2.5 Pro",
-      "Gemini 3 Flash Preview",
-      "Gemini 3 Pro Preview",
-      "Claude Haiku 4",
-      "Claude Opus 4",
-      "Claude Sonnet 4",
-      "Opus Plan",
-      "Whisper Large V3",
-      "Whisper Large V3 Turbo",
-    ],
-    icon: "🟡",
-    supportsStt: true,
-  },
   { id: "google", name: "Google (Gemini)", models: ["Gemini 2.5 Pro", "Gemini 2.5 Flash", "Gemini 2.0 Flash"], icon: "🔵" },
   { id: "deepgram", name: "Deepgram", models: ["Nova-2", "Nova-2 Medical", "Nova-2 Meeting"], icon: "🟣", sttOnly: true },
   { id: "assemblyai", name: "AssemblyAI", models: ["Universal-2", "Nano"], icon: "🔴", sttOnly: true },
@@ -107,7 +83,9 @@ interface ModelSettingsContextType {
   getActiveAIModelLabel: () => string;
   getAvailableAIModels: () => { value: string; label: string; group: string }[];
   appleFoundationAvailable: boolean;
-  copartFetchedModels: { models: string[]; sttModels: string[] } | null;
+  effectiveProviders: ModelProvider[];
+  optionalProviderIds: string[];
+  optionalFetchedModels: Record<string, { models: string[]; sttModels: string[] }>;
 }
 
 const ModelSettingsContext = createContext<ModelSettingsContextType | null>(null);
@@ -133,10 +111,25 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
   const [downloadProgress, setDownloadProgress] = useState<Record<string, DownloadProgress>>({});
   const [connectedProviders, setConnectedProviders] = useState<Record<string, { connected: boolean; apiKey: string }>>(init.connectedProviders);
   const [hiddenLocalModels, setHiddenLocalModels] = useState<string[]>(init.hiddenLocalModels ?? []);
-  const [copartFetchedModels, setCopartFetchedModels] = useState<{ models: string[]; sttModels: string[] } | null>(null);
   const [appleFoundationAvailable, setAppleFoundationAvailable] = useState(false);
   const [modelsListFetched, setModelsListFetched] = useState(false);
   const [dbSettingsLoaded, setDbSettingsLoaded] = useState(false);
+  const [optionalProviders, setOptionalProviders] = useState<{ id: string; name: string; icon: string; supportsStt?: boolean }[]>([]);
+  const [optionalFetchedModels, setOptionalFetchedModels] = useState<Record<string, { models: string[]; sttModels: string[] }>>({});
+
+  const effectiveProviders = useMemo(
+    () => [
+      ...enterpriseProviders,
+      ...optionalProviders.map((p) => ({
+        id: p.id,
+        name: p.name,
+        icon: p.icon,
+        models: [] as string[],
+        supportsStt: p.supportsStt,
+      })),
+    ],
+    [optionalProviders]
+  );
 
   // Apple (on-device) Foundation Model availability
   useEffect(() => {
@@ -144,19 +137,51 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
     api.app.isAppleFoundationAvailable().then(setAppleFoundationAvailable).catch(() => setAppleFoundationAvailable(false));
   }, [api]);
 
-  // Fetch Copart Genie models when connected
+  // Optional providers — only when user has the optional-providers files in userData
   useEffect(() => {
-    if (!api?.copart?.listModels || !connectedProviders.copart?.connected) {
-      setCopartFetchedModels(null);
-      return;
-    }
-    api.copart.listModels().then(({ models, sttModels }) => {
-      setCopartFetchedModels({
-        models: models.map((m) => m.id),
-        sttModels: sttModels.map((m) => m.id),
+    if (!api?.app?.getOptionalProviders) return;
+    api.app.getOptionalProviders().then(setOptionalProviders).catch(() => setOptionalProviders([]));
+  }, [api]);
+
+  // Load keychain for optional providers when they become available
+  useEffect(() => {
+    if (!api?.keychain || optionalProviders.length === 0) return;
+    for (const p of optionalProviders) {
+      api.keychain.get(p.id).then((key) => {
+        if (key) {
+          setConnectedProviders((prev) => ({
+            ...prev,
+            [p.id]: { connected: true, apiKey: key },
+          }));
+        }
       });
-    }).catch(() => setCopartFetchedModels(null));
-  }, [api, connectedProviders.copart?.connected]);
+    }
+  }, [api, optionalProviders]);
+
+  // Fetch models for each connected optional provider
+  useEffect(() => {
+    if (!api?.app?.invokeOptionalProvider || optionalProviders.length === 0) return;
+    for (const p of optionalProviders) {
+      if (!connectedProviders[p.id]?.connected) continue;
+      api.app.invokeOptionalProvider(p.id, 'listModels').then((res: { models?: { id: string }[]; sttModels?: { id: string }[] }) => {
+        if (res?.models || res?.sttModels) {
+          setOptionalFetchedModels((prev) => ({
+            ...prev,
+            [p.id]: {
+              models: (res.models || []).map((m) => m.id),
+              sttModels: (res.sttModels || []).map((m) => m.id),
+            },
+          }));
+        }
+      }).catch(() => {
+        setOptionalFetchedModels((prev) => {
+          const next = { ...prev };
+          delete next[p.id];
+          return next;
+        });
+      });
+    }
+  }, [api, optionalProviders, connectedProviders]);
 
   // Sync download states from Electron main process on mount
   useEffect(() => {
@@ -181,17 +206,20 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
       setModelsListFetched(true);
     });
 
-    // Load API keys from keychain
-    for (const provider of enterpriseProviders) {
-      api.keychain.get(provider.id).then((key) => {
-        if (key) {
-          setConnectedProviders((prev) => ({
-            ...prev,
-            [provider.id]: { connected: true, apiKey: key },
-          }));
-        }
-      });
-    }
+    // Load API keys from keychain (effectiveProviders includes optional providers when loaded)
+    const loadKeychain = (providers: ModelProvider[]) => {
+      for (const provider of providers) {
+        api.keychain.get(provider.id).then((key) => {
+          if (key) {
+            setConnectedProviders((prev) => ({
+              ...prev,
+              [provider.id]: { connected: true, apiKey: key },
+            }));
+          }
+        });
+      }
+    };
+    loadKeychain(enterpriseProviders);
   }, []);
 
   // Listen for download progress from main process
@@ -480,7 +508,7 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
     }
     const [providerId, ...rest] = selectedAIModel.split(":");
     const modelName = rest.join(":");
-    const provider = enterpriseProviders.find((p) => p.id === providerId);
+    const provider = effectiveProviders.find((p) => p.id === providerId);
     return provider ? `${modelName}` : selectedAIModel;
   };
 
@@ -498,11 +526,12 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
     Object.entries(connectedProviders)
       .filter(([_, v]) => v.connected)
       .forEach(([pid]) => {
-        const provider = enterpriseProviders.find((p) => p.id === pid);
+        const provider = effectiveProviders.find((p) => p.id === pid);
         if (!provider || provider.sttOnly) return;
+        const fetched = optionalFetchedModels[pid];
         const aiModels =
-          pid === "copart" && copartFetchedModels?.models?.length
-            ? copartFetchedModels.models
+          fetched?.models?.length
+            ? fetched.models
             : provider.supportsStt
               ? provider.models.filter((m) => !m.toLowerCase().includes("whisper"))
               : provider.models;
@@ -525,7 +554,9 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
         useLocalModels, setUseLocalModels,
         getActiveAIModelLabel, getAvailableAIModels,
         appleFoundationAvailable,
-        copartFetchedModels,
+        effectiveProviders,
+        optionalProviderIds: optionalProviders.map((p) => p.id),
+        optionalFetchedModels,
       }}
     >
       {children}

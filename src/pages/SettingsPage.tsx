@@ -10,7 +10,7 @@ import { Sidebar, SidebarCollapseButton } from "@/components/Sidebar";
 import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useModelSettings, localModels, enterpriseProviders } from "@/contexts/ModelSettingsContext";
+import { useModelSettings, localModels } from "@/contexts/ModelSettingsContext";
 import { useCalendar } from "@/contexts/CalendarContext";
 import { ICSDialog, type CalendarProviderId } from "@/components/ICSDialog";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
@@ -1060,7 +1060,9 @@ export default function SettingsPage() {
     useLocalModels, setUseLocalModels,
     getAvailableAIModels,
     appleFoundationAvailable,
-    copartFetchedModels,
+    effectiveProviders,
+    optionalProviderIds,
+    optionalFetchedModels,
   } = modelSettings;
   const [active, setActive] = useState("account");
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -1126,7 +1128,7 @@ export default function SettingsPage() {
   // AI model options: from context (includes Apple on-device when available, local, connected providers)
   const aiOptions = useMemo(
     () => getAvailableAIModels(),
-    [getAvailableAIModels, appleFoundationAvailable, connectedProviders, downloadStates, copartFetchedModels]
+    [getAvailableAIModels, appleFoundationAvailable, connectedProviders, downloadStates, optionalFetchedModels]
   );
 
   // Build STT model options: local + system (darwin) + connected providers (sttOnly all, supportsStt whisper-only)
@@ -1141,11 +1143,12 @@ export default function SettingsPage() {
     Object.entries(connectedProviders)
       .filter(([_, v]) => v.connected)
       .forEach(([pid]) => {
-        const provider = enterpriseProviders.find((p) => p.id === pid);
+        const provider = effectiveProviders.find((p) => p.id === pid);
         if (!provider) return;
+        const fetchedStt = optionalFetchedModels[pid];
         const sttModels =
-          pid === "copart" && copartFetchedModels?.sttModels?.length
-            ? copartFetchedModels.sttModels
+          fetchedStt?.sttModels?.length
+            ? fetchedStt.sttModels
             : provider.sttOnly
               ? provider.models
               : provider.models.filter((m) => m.toLowerCase().includes("whisper"));
@@ -1155,7 +1158,7 @@ export default function SettingsPage() {
         );
       });
     return out;
-  }, [connectedProviders, downloadStates, api, copartFetchedModels]);
+  }, [connectedProviders, downloadStates, api, optionalFetchedModels, effectiveProviders]);
 
   const selectedAILabel = selectedAIModel ? (aiOptions.find((o) => o.value === selectedAIModel)?.label ?? selectedAIModel) : "";
   const selectedSTTLabel = selectedSTTModel ? (sttOptions.find((o) => o.value === selectedSTTModel)?.label ?? selectedSTTModel) : "";
@@ -1221,22 +1224,22 @@ export default function SettingsPage() {
     await disconnectProvider(providerId);
   };
 
-  const [testingCopart, setTestingCopart] = useState(false);
-  const handleTestCopart = async () => {
+  const [testingOptionalProviderId, setTestingOptionalProviderId] = useState<string | null>(null);
+  const handleTestOptionalProvider = async (providerId: string, providerName: string) => {
     const electronApi = getElectronAPI();
-    if (!electronApi?.copart?.test) return;
-    setTestingCopart(true);
+    if (!electronApi?.app?.invokeOptionalProvider) return;
+    setTestingOptionalProviderId(providerId);
     try {
-      const result = await electronApi.copart.test();
-      if (result.ok) {
-        toast.success("Copart Genie: connection OK");
+      const result = await electronApi.app.invokeOptionalProvider(providerId, "test");
+      if (result?.ok) {
+        toast.success(`${providerName}: connection OK`);
       } else {
-        toast.error(result.error ?? "Connection failed");
+        toast.error((result as { error?: string })?.error ?? "Connection failed");
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Test failed");
     } finally {
-      setTestingCopart(false);
+      setTestingOptionalProviderId(null);
     }
   };
 
@@ -1551,9 +1554,13 @@ export default function SettingsPage() {
                     </p>
 
                     <div className="space-y-1.5">
-                      {enterpriseProviders.map((provider) => {
+                      {effectiveProviders.map((provider) => {
                         const isConnected = connectedProviders[provider.id]?.connected;
                         const isEditing = editingApiKey === provider.id;
+                        const fetched = optionalFetchedModels[provider.id];
+                        const displayModels = optionalProviderIds.includes(provider.id) && fetched?.models?.length
+                          ? fetched.models
+                          : provider.models;
 
                         return (
                           <div key={provider.id} className="rounded-md border border-border bg-card overflow-hidden">
@@ -1567,7 +1574,7 @@ export default function SettingsPage() {
                                   )}
                                 </div>
                                 <p className="text-[11px] text-muted-foreground mt-0.5 pl-7">
-                                  {provider.models.join(", ")}
+                                  {displayModels.length ? displayModels.join(", ") : (optionalProviderIds.includes(provider.id) ? "Connect to load models" : "")}
                                 </p>
                               </div>
                               <div className="flex items-center gap-1.5">
@@ -1577,14 +1584,14 @@ export default function SettingsPage() {
                                       <Check className="h-3 w-3" />
                                       Connected
                                     </span>
-                                    {provider.id === "copart" && (
+                                    {optionalProviderIds.includes(provider.id) && (
                                       <button
-                                        onClick={handleTestCopart}
-                                        disabled={testingCopart}
+                                        onClick={() => handleTestOptionalProvider(provider.id, provider.name)}
+                                        disabled={testingOptionalProviderId !== null}
                                         className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-foreground hover:bg-secondary disabled:opacity-50 transition-colors"
-                                        title="Test API key with Copart Genie"
+                                        title={`Test API key with ${provider.name}`}
                                       >
-                                        {testingCopart ? "Testing…" : "Test connection"}
+                                        {testingOptionalProviderId === provider.id ? "Testing…" : "Test connection"}
                                       </button>
                                     )}
                                     <button

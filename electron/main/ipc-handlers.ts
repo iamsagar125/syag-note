@@ -10,7 +10,7 @@ import { downloadModel, cancelDownload, deleteModel, listDownloadedModels } from
 import { netFetch } from './cloud/net-request'
 import { startRecording, stopRecording, pauseRecording, resumeRecording, processAudioChunk } from './audio/capture'
 import { summarize } from './models/llm-engine'
-import { chat, testCopartConnection, listCopartGenieModels } from './cloud/router'
+import { chat, getOptionalProviders } from './cloud/router'
 import { checkAppleFoundationAvailable } from './cloud/apple-llm'
 import { join, dirname } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
@@ -243,9 +243,8 @@ export function registerIPCHandlers(): void {
     return true
   })
 
-  // --- Copart Genie test ---
-  ipcMain.handle('copart:test', () => testCopartConnection())
-  ipcMain.handle('copart:listModels', () => listCopartGenieModels())
+  // --- Optional providers (enabled via userData/optional-providers/; not in repo) ---
+  ipcMain.handle('app:get-optional-providers', () => getOptionalProviders())
 
   // --- Calendar / URL Fetch ---
   ipcMain.handle('fetch:url', async (_e, url: string) => {

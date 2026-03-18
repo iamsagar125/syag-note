@@ -42,6 +42,12 @@ macOS (Apple Silicon) only.
 
 ---
 
+## Resources
+
+https://drive.google.com/drive/folders/1BdYUTPUSLokM7wYnkgE2Wqn46IX9TsyS?usp=sharing
+
+---
+
 ## License
 
 MIT

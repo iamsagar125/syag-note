@@ -9,6 +9,7 @@ import { ensureModelsDir } from './models/manager'
 import { startMeetingDetection, stopMeetingDetection } from './meeting-detector'
 import { setupPowerMonitor } from './power-manager'
 import { startApiServer, stopApiServer, getApiToken } from './api/server'
+import { loadOptionalProviders } from './cloud/optional-providers-loader'
 
 app.setName('Syag')
 
@@ -63,6 +64,7 @@ app.whenReady().then(async () => {
   }
   ensureModelsDir()
   registerIPCHandlers()
+  loadOptionalProviders()
 
   // Start Agent API if enabled and token exists
   if (getSetting('api-enabled') === 'true' && getApiToken()) {
