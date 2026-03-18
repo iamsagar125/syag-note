@@ -194,6 +194,21 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
     }
   }, [activeSession?.startTime, activeSession?.isRecording]);
 
+  // Hide window during recording for privacy (prevent accidental screen share)
+  useEffect(() => {
+    if (!api?.window) return;
+
+    if (activeSession?.isRecording) {
+      api.window.hide().catch((err) => {
+        console.warn('[Recording] Failed to hide window:', err);
+      });
+    } else {
+      api.window.show().catch((err) => {
+        console.warn('[Recording] Failed to show window:', err);
+      });
+    }
+  }, [activeSession?.isRecording, api?.window]);
+
   const stopSpeechRecognition = useCallback(() => {
     if (speechRecRef.current) {
       try { speechRecRef.current.abort(); } catch {}

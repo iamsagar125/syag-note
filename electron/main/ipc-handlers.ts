@@ -705,12 +705,17 @@ export function registerIPCHandlers(): void {
     return getLiveSuggestions(recentTranscript, model)
   })
 
-  // --- Content Protection ---
-  ipcMain.handle('app:set-content-protection', (_e, enabled: boolean) => {
-    const { setContentProtection } = require('./windows')
-    setContentProtection(enabled)
-    setSetting('hide-from-screen-share', enabled ? 'true' : 'false')
-    return true
+  // --- Window visibility (for recording privacy) ---
+  ipcMain.handle('window:hide', async () => {
+    const { getMainWindow } = require('./windows')
+    const win = getMainWindow()
+    if (win) win.hide()
+  })
+
+  ipcMain.handle('window:show', async () => {
+    const { getMainWindow } = require('./windows')
+    const win = getMainWindow()
+    if (win) win.show()
   })
 
   // --- App ---

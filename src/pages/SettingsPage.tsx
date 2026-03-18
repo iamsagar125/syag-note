@@ -1289,13 +1289,6 @@ export default function SettingsPage() {
                     <SettingRow label="Auto-reposition during meetings" description="Syag will move to the side when you join a meeting, so you can keep taking notes">
                       <Toggle enabled={prefs.autoReposition} onToggle={() => updatePref("autoReposition", !prefs.autoReposition)} />
                     </SettingRow>
-                    <SettingRow label="Hide from screen sharing" description="Prevents the Syag window from appearing in screen shares and recordings — invisible to others on calls">
-                      <Toggle enabled={prefs.hideFromScreenShare ?? true} onToggle={() => {
-                        const newVal = !(prefs.hideFromScreenShare ?? true);
-                        updatePref("hideFromScreenShare", newVal);
-                        api?.contentProtection?.set(newVal);
-                      }} />
-                    </SettingRow>
                   </div>
                   <div>
                     <label className="text-[13px] font-medium text-foreground mb-2 block">Appearance</label>

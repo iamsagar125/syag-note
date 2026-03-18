@@ -1,6 +1,5 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
-import { getSetting } from './storage/database'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -23,10 +22,6 @@ export function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
     }
   })
-
-  // Hide from screen sharing / screen capture (macOS CGWindowSharingNone)
-  const hideFromScreenShare = getSetting('hide-from-screen-share') !== 'false'
-  mainWindow.setContentProtection(hideFromScreenShare)
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()

@@ -254,6 +254,9 @@ async function summarizeWithApple(
 
 // ─── Local Model Fallbacks ──────────────────────────────────────────────────
 
+/** Limit context and CPU threads so local Llama doesn't overwhelm the machine. */
+const LLAMA_CONTEXT_OPTIONS = { contextSize: 8192, threads: 4 }
+
 async function summarizeWithLocal(
   userInput: string,
   modelId: string,
@@ -269,7 +272,7 @@ async function summarizeWithLocal(
 
     const llama = await getLlama()
     const model = await llama.loadModel({ modelPath })
-    const ctx = await model.createContext()
+    const ctx = await model.createContext(LLAMA_CONTEXT_OPTIONS)
     const session = new LlamaChatSession({ contextSequence: ctx.getSequence() })
 
     const response = await session.prompt(userInput, {
@@ -305,7 +308,7 @@ async function chatWithLocal(
 
     const llama = await getLlama()
     const model = await llama.loadModel({ modelPath })
-    const ctx = await model.createContext()
+    const ctx = await model.createContext(LLAMA_CONTEXT_OPTIONS)
     const session = new LlamaChatSession({ contextSequence: ctx.getSequence() })
 
     const systemContent = messages.find(m => m.role === 'system')?.content || ''
