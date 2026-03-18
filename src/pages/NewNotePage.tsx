@@ -12,7 +12,6 @@ import {
   CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, FileText
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { LiveCoachOverlay } from "@/components/LiveCoachOverlay";
 import { KBSuggestionsPanel, type KBSuggestion } from "@/components/KBSuggestionsPanel";
 import { useFolders } from "@/contexts/FolderContext";
 import { useNotes } from "@/contexts/NotesContext";
@@ -184,7 +183,6 @@ export default function NewNotePage() {
   const [noteId, setNoteId] = useState(() => isReturning ? existingSessionId! : crypto.randomUUID());
   /** Granola-style: only start mic when user explicitly clicks Start. Prevents mic use when app opens or meeting detected. */
   const [userHasStartedCapture, setUserHasStartedCapture] = useState(false);
-  const [coachVisible, setCoachVisible] = useState(true);
   const [kbSuggestions, setKbSuggestions] = useState<KBSuggestion[]>([]);
   const [kbVisible, setKbVisible] = useState(true);
   const [kbLoading, setKbLoading] = useState(false);
@@ -1332,14 +1330,6 @@ export default function NewNotePage() {
           />
         )}
 
-        {/* Live coaching overlay — shown during active recording */}
-        {recordingState === "recording" && transcriptLines.length > 0 && (
-          <LiveCoachOverlay
-            transcriptLines={transcriptLines}
-            visible={coachVisible}
-            onToggle={() => setCoachVisible(v => !v)}
-          />
-        )}
       </main>
     </div>
   );

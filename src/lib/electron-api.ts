@@ -133,10 +133,11 @@ type ElectronAPI = {
       getAll: () => Promise<any[]>
       get: (id: string) => Promise<any | null>
       upsert: (data: any) => Promise<any>
+      delete: (id: string) => Promise<boolean>
       merge: (keepId: string, mergeId: string) => Promise<boolean>
       getMeetings: (personId: string) => Promise<any[]>
       forNote: (noteId: string) => Promise<any[]>
-      update: (id: string, data: { name?: string; company?: string; role?: string; relationship?: string }) => Promise<boolean>
+      update: (id: string, data: { name?: string; email?: string; company?: string; role?: string; relationship?: string; notes?: string }) => Promise<boolean>
       unlinkFromNote: (noteId: string, personId: string) => Promise<boolean>
       linkToNote: (noteId: string, personId: string, role?: string) => Promise<boolean>
     }
@@ -156,6 +157,9 @@ type ElectronAPI = {
       updateLabel: (id: string, label: string) => Promise<boolean>
     }
     extractEntities: (data: { noteId: string; summary: any; transcript: any[]; model: string; calendarAttendees?: any[] }) => Promise<{ ok: boolean; peopleCount?: number; commitmentCount?: number; topicCount?: number; error?: string }>
+  }
+  coaching?: {
+    generateRoleInsights: (metrics: any, roleId: string, model?: string) => Promise<{ roleInsights: string[]; roleId: string }>
   }
   kb?: {
     pickFolder: () => Promise<{ ok: boolean; path?: string; added?: number; updated?: number; removed?: number; total?: number; error?: string }>

@@ -8,7 +8,7 @@ import { NotesViewToggle } from "@/components/NotesViewToggle";
 import { useNotes, type SavedNote } from "@/contexts/NotesContext";
 import { useRecording } from "@/contexts/RecordingContext";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
-import { Share2, MoreHorizontal, FileText, Hash, Calendar, Clock, EyeOff, Eye, Search, X, Check, ChevronDown, Loader2, Copy, Download, FileDown, BarChart3, BookOpen, MessageSquare } from "lucide-react";
+import { Share2, MoreHorizontal, FileText, Hash, Calendar, Clock, EyeOff, Eye, Search, X, Check, ChevronDown, Loader2, Copy, Download, FileDown, BarChart3, BookOpen, MessageSquare, Sparkles } from "lucide-react";
 import { MeetingMetadata } from "@/components/MeetingMetadata";
 import { cn } from "@/lib/utils";
 import { groupTranscriptBySpeaker } from "@/lib/transcript-utils";
@@ -604,6 +604,7 @@ export default function NoteDetailPage() {
 // ── Coaching View (computed on demand) ───────────────────────────────
 
 function CoachingView({ note, updateNote }: { note: SavedNote; updateNote: (id: string, updates: Partial<SavedNote>) => void }) {
+  const api = getElectronAPI();
   const meetingDurationSec = useMemo(() => {
     const parts = (note.duration || "0:00").split(":").map(Number);
     if (parts.length === 2) return parts[0] * 60 + parts[1];
@@ -612,15 +613,38 @@ function CoachingView({ note, updateNote }: { note: SavedNote; updateNote: (id: 
   }, [note.duration]);
 
   const metrics = useMemo(() => {
-    // Use cached metrics if available
     if (note.coachingMetrics) return note.coachingMetrics;
-    // Otherwise compute on the fly
     if (!note.transcript?.length || meetingDurationSec <= 0) return null;
     const computed = computeCoachingMetrics(note.transcript, meetingDurationSec);
-    // Persist computed metrics
     updateNote(note.id, { coachingMetrics: computed });
     return computed;
   }, [note.coachingMetrics, note.transcript, meetingDurationSec, note.id, updateNote]);
+
+  const [roleInsights, setRoleInsights] = useState<string[]>(metrics?.roleInsights ?? []);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!metrics || metrics.roleInsights?.length || !api?.coaching) return;
+    let cancelled = false;
+    (async () => {
+      let roleId: string | undefined;
+      try {
+        const raw = localStorage.getItem('syag-account');
+        if (raw) roleId = JSON.parse(raw)?.roleId;
+      } catch { /* ignore */ }
+      if (!roleId || cancelled) return;
+      setInsightsLoading(true);
+      try {
+        const result = await api.coaching!.generateRoleInsights(metrics, roleId);
+        if (!cancelled && result.roleInsights.length > 0) {
+          setRoleInsights(result.roleInsights);
+          updateNote(note.id, { coachingMetrics: { ...metrics, roleInsights: result.roleInsights, roleId } });
+        }
+      } catch { /* ignore */ }
+      if (!cancelled) setInsightsLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [metrics, api, note.id, updateNote]);
 
   if (!metrics) {
     return (
@@ -632,7 +656,80 @@ function CoachingView({ note, updateNote }: { note: SavedNote; updateNote: (id: 
     );
   }
 
-  return <CoachingCard metrics={metrics} meetingDurationSec={meetingDurationSec} />;
+  return (
+    <div className="space-y-4">
+      {/* Role-specific coaching insights */}
+      {(roleInsights.length > 0 || insightsLoading) && (
+        <div className="rounded-xl border border-accent/30 bg-accent/5 p-4 space-y-2">
+          <h4 className="text-xs font-medium text-accent uppercase tracking-wider flex items-center gap-1.5">
+            <Sparkles className="h-3 w-3" /> Role-Specific Coaching
+          </h4>
+          {insightsLoading && roleInsights.length === 0 ? (
+            <p className="text-[12px] text-muted-foreground animate-pulse">Generating coaching insights...</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {roleInsights.map((insight, i) => (
+                <li key={i} className="text-[12px] text-foreground leading-relaxed flex gap-2">
+                  <span className="text-accent flex-shrink-0 mt-0.5">•</span>
+                  <span>{insight}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Communication mix bar */}
+      <CommunicationMixBar metrics={metrics} />
+
+      <CoachingCard metrics={metrics} meetingDurationSec={meetingDurationSec} />
+    </div>
+  );
+}
+
+// ── Communication mix bar ────────────────────────────────────────────
+
+function CommunicationMixBar({ metrics }: { metrics: import("@/lib/coaching-analytics").CoachingMetrics }) {
+  const total = metrics.yourSpeakingTimeSec + metrics.othersSpeakingTimeSec + metrics.silenceTimeSec;
+  if (total <= 0) return null;
+
+  const youPct = Math.round((metrics.yourSpeakingTimeSec / total) * 100);
+  const othersPct = Math.round((metrics.othersSpeakingTimeSec / total) * 100);
+  const silencePct = 100 - youPct - othersPct;
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Communication Mix</h4>
+      <div className="flex rounded-full overflow-hidden h-4">
+        {youPct > 0 && (
+          <div
+            className="bg-[hsl(24,45%,42%)] dark:bg-[hsl(24,42%,55%)] transition-all"
+            style={{ width: `${youPct}%` }}
+            title={`You: ${youPct}%`}
+          />
+        )}
+        {othersPct > 0 && (
+          <div
+            className="bg-[hsl(28,18%,72%)] dark:bg-[hsl(28,8%,45%)] transition-all"
+            style={{ width: `${othersPct}%` }}
+            title={`Others: ${othersPct}%`}
+          />
+        )}
+        {silencePct > 0 && (
+          <div
+            className="bg-[hsl(25,14%,89%)] dark:bg-[hsl(22,8%,22%)] transition-all"
+            style={{ width: `${silencePct}%` }}
+            title={`Silence: ${silencePct}%`}
+          />
+        )}
+      </div>
+      <div className="flex justify-between mt-2 text-[11px] text-muted-foreground">
+        <span>You {youPct}%</span>
+        <span>Others {othersPct}%</span>
+        <span>Silence {silencePct}%</span>
+      </div>
+    </div>
+  );
 }
 
 // ── Filler word highlighting ─────────────────────────────────────────

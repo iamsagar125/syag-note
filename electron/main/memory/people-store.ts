@@ -18,14 +18,20 @@ function levenshteinDistance(a: string, b: string): number {
 }
 
 export function getAllPeople(): any[] {
-  return getDb().prepare('SELECT * FROM people ORDER BY last_seen DESC').all() as any[]
+  return getDb().prepare(`
+    SELECT p.*, COALESCE(mc.cnt, 0) as meetingCount
+    FROM people p
+    LEFT JOIN (SELECT person_id, COUNT(*) as cnt FROM note_people GROUP BY person_id) mc
+      ON mc.person_id = p.id
+    ORDER BY p.last_seen DESC
+  `).all() as any[]
 }
 
 export function getPerson(id: string): any | null {
   return getDb().prepare('SELECT * FROM people WHERE id = ?').get(id) as any ?? null
 }
 
-export function upsertPerson(data: { name: string; email?: string; company?: string; role?: string; relationship?: string }): any {
+export function upsertPerson(data: { name: string; email?: string; company?: string; role?: string; relationship?: string; notes?: string }): any {
   const db = getDb()
   const now = new Date().toISOString()
 
@@ -61,10 +67,18 @@ export function upsertPerson(data: { name: string; email?: string; company?: str
   // Create new
   const id = randomUUID()
   db.prepare(`
-    INSERT INTO people (id, name, email, company, role, relationship, first_seen, last_seen)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, data.name, data.email ?? null, data.company ?? null, data.role ?? null, data.relationship ?? null, now, now)
+    INSERT INTO people (id, name, email, company, role, relationship, notes, first_seen, last_seen)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, data.name, data.email ?? null, data.company ?? null, data.role ?? null, data.relationship ?? null, data.notes ?? null, now, now)
   return getPerson(id)
+}
+
+export function deletePerson(id: string): boolean {
+  const db = getDb()
+  db.prepare('DELETE FROM note_people WHERE person_id = ?').run(id)
+  db.prepare('UPDATE commitments SET assignee_id = NULL WHERE assignee_id = ?').run(id)
+  const result = db.prepare('DELETE FROM people WHERE id = ?').run(id)
+  return (result as any).changes > 0
 }
 
 export function mergePeople(keepId: string, mergeId: string): boolean {
@@ -113,14 +127,16 @@ export function getNotePeople(noteId: string): any[] {
   `).all(noteId) as any[]
 }
 
-export function updatePerson(id: string, data: { name?: string; company?: string; role?: string; relationship?: string }): boolean {
+export function updatePerson(id: string, data: { name?: string; email?: string; company?: string; role?: string; relationship?: string; notes?: string }): boolean {
   const db = getDb()
   const fields: string[] = []
   const values: any[] = []
   if (data.name !== undefined) { fields.push('name = ?'); values.push(data.name) }
+  if (data.email !== undefined) { fields.push('email = ?'); values.push(data.email || null) }
   if (data.company !== undefined) { fields.push('company = ?'); values.push(data.company || null) }
   if (data.role !== undefined) { fields.push('role = ?'); values.push(data.role || null) }
   if (data.relationship !== undefined) { fields.push('relationship = ?'); values.push(data.relationship || null) }
+  if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes || null) }
   if (fields.length === 0) return false
   values.push(id)
   db.prepare(`UPDATE people SET ${fields.join(', ')} WHERE id = ?`).run(...values)

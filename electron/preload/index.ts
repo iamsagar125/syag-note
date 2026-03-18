@@ -226,6 +226,7 @@ const electronAPI = {
       getAll: () => ipcRenderer.invoke('memory:people-get-all'),
       get: (id: string) => ipcRenderer.invoke('memory:people-get', id),
       upsert: (data: any) => ipcRenderer.invoke('memory:people-upsert', data),
+      delete: (id: string) => ipcRenderer.invoke('memory:people-delete', id) as Promise<boolean>,
       merge: (keepId: string, mergeId: string) => ipcRenderer.invoke('memory:people-merge', keepId, mergeId),
       getMeetings: (personId: string) => ipcRenderer.invoke('memory:people-get-meetings', personId),
       forNote: (noteId: string) => ipcRenderer.invoke('memory:people-for-note', noteId),
@@ -250,6 +251,11 @@ const electronAPI = {
     },
     extractEntities: (data: { noteId: string; summary: any; transcript: any[]; model: string; calendarAttendees?: any[] }) =>
       ipcRenderer.invoke('memory:extract-entities', data) as Promise<{ ok: boolean; peopleCount?: number; commitmentCount?: number; topicCount?: number; error?: string }>,
+  },
+
+  coaching: {
+    generateRoleInsights: (metrics: any, roleId: string, model?: string) =>
+      ipcRenderer.invoke('coaching:generate-role-insights', metrics, roleId, model) as Promise<{ roleInsights: string[]; roleId: string }>,
   },
 
   kb: {

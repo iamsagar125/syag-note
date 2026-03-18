@@ -543,6 +543,10 @@ export function registerIPCHandlers(): void {
     const { upsertPerson } = await import('./memory/people-store')
     return upsertPerson(data)
   })
+  ipcMain.handle('memory:people-delete', async (_e, id: string) => {
+    const { deletePerson } = await import('./memory/people-store')
+    return deletePerson(id)
+  })
   ipcMain.handle('memory:people-merge', async (_e, keepId: string, mergeId: string) => {
     const { mergePeople } = await import('./memory/people-store')
     return mergePeople(keepId, mergeId)
@@ -624,6 +628,12 @@ export function registerIPCHandlers(): void {
       console.error('[memory:extract-entities]', err)
       return { ok: false, error: err.message || 'Entity extraction failed' }
     }
+  })
+
+  // --- Coaching Feedback ---
+  ipcMain.handle('coaching:generate-role-insights', async (_e, metrics: any, roleId: string, model?: string) => {
+    const { generateRoleCoachingInsights } = await import('./models/coaching-feedback')
+    return generateRoleCoachingInsights(metrics, roleId, model)
   })
 
   // --- Knowledge Base ---

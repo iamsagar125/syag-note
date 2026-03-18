@@ -30,10 +30,6 @@ export function createMainWindow(): BrowserWindow {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
-    // When packaged, open DevTools so we can see load/console errors (e.g. blank screen)
-    if (app.isPackaged) {
-      mainWindow.webContents.openDevTools({ mode: 'detach' })
-    }
   })
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
