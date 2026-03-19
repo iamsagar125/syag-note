@@ -1,3 +1,5 @@
+import type { ConversationInsights } from "./coaching-analytics"
+
 type TranscriptWord = { word: string; start: number; end: number }
 type TranscriptChunk = {
   speaker: string
@@ -11,6 +13,14 @@ type DownloadProgress = {
   bytesDownloaded: number
   totalBytes: number
   percent: number
+}
+
+/** Transcript of what the main process did for local STT setup (Settings / toasts). */
+export type LocalSetupResult = {
+  ok: boolean
+  steps: string[]
+  error?: string
+  hint?: string
 }
 
 type ElectronAPI = {
@@ -41,11 +51,18 @@ type ElectronAPI = {
     delete: (modelId: string) => Promise<boolean>
     list: () => Promise<string[]>
     onDownloadProgress: (callback: (progress: DownloadProgress) => void) => () => void
-    onDownloadComplete: (callback: (data: { modelId: string; success: boolean; error?: string }) => void) => () => void
+    onDownloadComplete: (
+      callback: (data: {
+        modelId: string
+        success: boolean
+        error?: string
+        whisperCli?: LocalSetupResult
+      }) => void
+    ) => () => void
     checkMLXWhisper: () => Promise<boolean>
-    installMLXWhisper: () => Promise<boolean>
+    installMLXWhisper: () => Promise<LocalSetupResult>
     checkMLXWhisper8Bit: () => Promise<boolean>
-    installMLXWhisper8Bit: () => Promise<boolean>
+    installMLXWhisper8Bit: () => Promise<LocalSetupResult>
     checkFfmpeg: () => Promise<boolean>
     installFfmpeg: () => Promise<boolean>
     repairMLXWhisper: () => Promise<{ ok: boolean; error?: string }>
@@ -95,6 +112,13 @@ type ElectronAPI = {
     onTrayStartRecording: (callback: () => void) => () => void
     onTrayStopRecording?: (callback: () => void) => () => void
     onTrayNavigateToMeeting?: (callback: () => void) => () => void
+    onTrayAgendaNavigate?: (callback: (data: { path: string; search?: string }) => void) => () => void
+    onTrayAgendaOpenEvent?: (callback: (payload: {
+      noteId?: string | null
+      eventId?: string
+      title?: string
+      openMode: "note" | "calendar"
+    }) => void) => () => void
     onTrayPauseRecording?: (callback: () => void) => () => void
     onMeetingDetected: (callback: (data: { app: string; title?: string; startTime?: number; calendarEvent?: any }) => void) => () => void
     onMeetingEnded: (callback: (data: { app: string }) => void) => () => void
@@ -116,14 +140,52 @@ type ElectronAPI = {
     testWebhook: (webhookUrl: string) => Promise<{ ok: boolean; error?: string }>
     sendSummary: (webhookUrl: string, payload: any) => Promise<{ ok: boolean; error?: string }>
   }
+  calendarLocalBlocks?: {
+    list: () => Promise<{ id: string; title: string; startIso: string; endIso: string; noteId: string | null; createdAt: string }[]>
+    add: (block: { id: string; title: string; startIso: string; endIso: string; noteId?: string | null }) => Promise<boolean>
+    delete: (id: string) => Promise<boolean>
+  }
+  trayAgenda?: {
+    setCache: (events: unknown) => Promise<boolean>
+    getCache: () => Promise<
+      Array<{
+        id: string
+        title: string
+        start: string
+        end: string
+        joinLink?: string
+        hasNote?: boolean
+        noteId?: string | null
+        source?: "synced" | "local"
+      }>
+    >
+    showMain: () => Promise<boolean>
+    showSettings: () => Promise<boolean>
+    goToApp: () => Promise<boolean>
+    newNote: () => Promise<boolean>
+    quit: () => Promise<boolean>
+    activateEvent: (payload: {
+      noteId?: string | null
+      eventId?: string
+      title?: string
+      openMode: "note" | "calendar"
+    }) => Promise<boolean>
+    onCacheUpdated: (callback: () => void) => () => void
+  }
   google?: {
     calendarAuth: (clientId: string) => Promise<{ ok: boolean; accessToken?: string; refreshToken?: string; expiresIn?: number; email?: string; error?: string }>
-    calendarFetch: (accessToken: string) => Promise<{ ok: boolean; events: any[]; error?: string }>
+    calendarFetch: (
+      accessToken: string,
+      range?: { daysPast?: number; daysAhead?: number }
+    ) => Promise<{ ok: boolean; events: any[]; error?: string }>
     calendarRefresh: (clientId: string, refreshToken: string) => Promise<{ ok: boolean; accessToken?: string; expiresIn?: number; error?: string }>
   }
   microsoft?: {
     calendarAuth: (clientId: string) => Promise<{ ok: boolean; accessToken?: string; refreshToken?: string; expiresIn?: number; email?: string; error?: string }>
-    calendarFetch: (accessToken: string) => Promise<{ ok: boolean; events: any[]; error?: string }>
+    calendarFetch: (
+      accessToken: string,
+      range?: { daysPast?: number; daysAhead?: number }
+    ) => Promise<{ ok: boolean; events: any[]; error?: string }>
     calendarRefresh: (clientId: string, refreshToken: string) => Promise<{ ok: boolean; accessToken?: string; expiresIn?: number; error?: string }>
   }
   memory?: {
@@ -164,6 +226,38 @@ type ElectronAPI = {
   }
   coaching?: {
     generateRoleInsights: (metrics: any, roleId: string, model?: string) => Promise<{ roleInsights: string[]; roleId: string }>
+    analyzeConversation: (payload: {
+      transcript: { speaker: string; time: string; text: string }[]
+      metrics: Record<string, unknown>
+      heuristics?: {
+        yourTurns: number
+        yourTurnsWithQuestion: number
+        questionRatioYou: number
+        longestYouMonologueWords: number
+        longestYouMonologueLines: number
+        totalYouWords: number
+        suggestedHabitTags: string[]
+      } | null
+      roleId: string
+      model?: string
+    }) => Promise<ConversationInsights | null>
+    aggregateInsights: (
+      meetings: {
+        title: string
+        date: string
+        headline: string
+        narrative: string
+        habitTags: string[]
+        overallScore?: number
+      }[],
+      roleId: string,
+      model?: string
+    ) => Promise<{
+      summaryHeadline: string
+      themesParagraph: string
+      focusNext: string
+      recurringTags: string[]
+    } | null>
   }
   kb?: {
     pickFolder: () => Promise<{ ok: boolean; path?: string; added?: number; updated?: number; removed?: number; total?: number; error?: string }>

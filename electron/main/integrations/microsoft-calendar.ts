@@ -15,19 +15,26 @@ export interface MicrosoftCalendarEvent {
   isAllDay: boolean
 }
 
+export interface MicrosoftCalendarFetchRange {
+  daysPast?: number
+  daysAhead?: number
+}
+
 /**
  * Fetch calendar events from Microsoft Graph API.
- * @param accessToken - valid Microsoft Graph access token
- * @param daysAhead  - number of days to look ahead (default 7)
+ * Default: 30 days past through 30 days ahead.
  */
 export async function fetchMicrosoftCalendarEvents(
   accessToken: string,
-  daysAhead = 7
+  range: MicrosoftCalendarFetchRange = {}
 ): Promise<MicrosoftCalendarEvent[]> {
+  const daysPast = range.daysPast ?? 30
+  const daysAhead = range.daysAhead ?? 30
   const now = new Date()
+  const start = new Date(now.getTime() - daysPast * 24 * 60 * 60 * 1000)
   const end = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000)
 
-  const url = `${GRAPH_CALENDAR_URL}?startDateTime=${now.toISOString()}&endDateTime=${end.toISOString()}&$top=50&$orderby=start/dateTime&$select=id,subject,start,end,location,isAllDay,onlineMeeting,onlineMeetingUrl,body`
+  const url = `${GRAPH_CALENDAR_URL}?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$top=100&$orderby=start/dateTime&$select=id,subject,start,end,location,isAllDay,onlineMeeting,onlineMeetingUrl,body`
 
   const { statusCode, data } = await netFetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },

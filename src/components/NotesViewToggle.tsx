@@ -11,19 +11,20 @@ interface NotesViewToggleProps {
   showCoaching?: boolean;
 }
 
+const segmentClass = (
+  active: boolean
+) => cn(
+  "flex items-center justify-center p-2 transition-colors",
+  active ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+);
+
 export function NotesViewToggle({ viewMode, onViewModeChange, transcriptVisible, onToggleTranscript, showCoaching }: NotesViewToggleProps) {
   return (
-    <div className="flex items-center gap-1">
     <div className="flex items-center rounded-full border border-border bg-card overflow-hidden">
-      {/* My Notes icon (hamburger lines) */}
+      {/* My Notes */}
       <button
         onClick={() => onViewModeChange("my-notes")}
-        className={cn(
-          "flex items-center justify-center p-2 transition-colors",
-          viewMode === "my-notes"
-            ? "bg-secondary text-foreground"
-            : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-        )}
+        className={segmentClass(viewMode === "my-notes")}
         title="My notes only"
       >
         <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
@@ -33,15 +34,10 @@ export function NotesViewToggle({ viewMode, onViewModeChange, transcriptVisible,
         </svg>
       </button>
 
-      {/* AI + My Notes icon (sparkle) */}
+      {/* Summary (AI notes) */}
       <button
         onClick={() => onViewModeChange("ai-notes")}
-        className={cn(
-          "flex items-center justify-center p-2 transition-colors",
-          viewMode === "ai-notes"
-            ? "bg-secondary text-foreground"
-            : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-        )}
+        className={segmentClass(viewMode === "ai-notes")}
         title="AI notes + my notes"
       >
         <svg className="h-4 w-4" viewBox="0 0 16 16" fill="currentColor">
@@ -50,34 +46,27 @@ export function NotesViewToggle({ viewMode, onViewModeChange, transcriptVisible,
         </svg>
       </button>
 
-      {/* Coaching icon (bar chart) */}
+      {/* Transcript visibility (eye) — after Summary */}
+      {onToggleTranscript && (
+        <button
+          onClick={onToggleTranscript}
+          className={segmentClass(!!transcriptVisible)}
+          title={transcriptVisible ? "Hide transcript" : "Show transcript"}
+        >
+          {transcriptVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      )}
+
+      {/* Coaching (bar chart) */}
       {showCoaching && (
         <button
           onClick={() => onViewModeChange("coaching")}
-          className={cn(
-            "flex items-center justify-center p-2 transition-colors",
-            viewMode === "coaching"
-              ? "bg-secondary text-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-          )}
+          className={segmentClass(viewMode === "coaching")}
           title="Speech coaching"
         >
           <BarChart3 className="h-4 w-4" />
         </button>
       )}
-    </div>
-    {onToggleTranscript && (
-      <button
-        onClick={onToggleTranscript}
-        className={cn(
-          "flex items-center justify-center p-2 rounded-full border border-border transition-colors",
-          transcriptVisible ? "bg-secondary text-foreground" : "bg-card text-muted-foreground hover:text-foreground hover:bg-secondary/50"
-        )}
-        title={transcriptVisible ? "Hide transcript" : "Show transcript"}
-      >
-        {transcriptVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-      </button>
-    )}
     </div>
   );
 }

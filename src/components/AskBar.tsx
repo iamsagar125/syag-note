@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ArrowUp, X, FileText, Play, Eye, EyeOff, Loader2 } from "lucide-react";
+import { ArrowUp, X, FileText, Play, Eye, EyeOff, Loader2, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
 import { getElectronAPI, isElectron } from "@/lib/electron-api";
@@ -21,9 +21,13 @@ interface AskBarProps {
   hideTranscriptToggle?: boolean;
   recordingState?: "recording" | "paused" | "stopped";
   elapsed?: string;
+  /** One-line LLM summary when the user's name appears in the live transcript (meeting only). */
+  mentionContextHint?: string | null;
+  mentionHintLoading?: boolean;
+  onDismissMentionHint?: () => void;
 }
 
-export function AskBar({ context = "home", meetingTitle, noteContext, coachingMetrics, leftSlot, generateSummarySlot, onResumeRecording, onPauseRecording, onToggleTranscript, transcriptVisible, hideTranscriptToggle, recordingState, elapsed }: AskBarProps) {
+export function AskBar({ context = "home", meetingTitle, noteContext, coachingMetrics, leftSlot, generateSummarySlot, onResumeRecording, onPauseRecording, onToggleTranscript, transcriptVisible, hideTranscriptToggle, recordingState, elapsed, mentionContextHint, mentionHintLoading, onDismissMentionHint }: AskBarProps) {
   const { getActiveAIModelLabel, selectedAIModel } = useModelSettings();
   const api = getElectronAPI();
 
@@ -202,6 +206,33 @@ export function AskBar({ context = "home", meetingTitle, noteContext, coachingMe
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {(context === "meeting" && (mentionHintLoading || (mentionContextHint && mentionContextHint.length > 0))) && (
+          <div className="mb-2 rounded-lg border border-accent/25 bg-accent/5 px-3 py-2 flex items-start gap-2">
+            <Sparkles className="h-3.5 w-3.5 text-accent flex-shrink-0 mt-0.5" aria-hidden />
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground mb-0.5">You were mentioned</p>
+              {mentionHintLoading ? (
+                <p className="text-[13px] text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                  Summarizing what to address…
+                </p>
+              ) : (
+                <p className="text-[13px] text-foreground/90 leading-snug">{mentionContextHint}</p>
+              )}
+            </div>
+            {!mentionHintLoading && onDismissMentionHint && (
+              <button
+                type="button"
+                onClick={onDismissMentionHint}
+                className="rounded p-1 text-muted-foreground hover:text-foreground hover:bg-secondary flex-shrink-0"
+                aria-label="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         )}
 

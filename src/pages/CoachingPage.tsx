@@ -1,11 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Sidebar, SidebarCollapseButton, SidebarTopBarLeft } from "@/components/Sidebar";
 import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { useNotes } from "@/contexts/NotesContext";
-import { isElectron } from "@/lib/electron-api";
+import { isElectron, getElectronAPI } from "@/lib/electron-api";
 import { cn } from "@/lib/utils";
-import { BarChart3, TrendingUp, TrendingDown, Minus, Mic, Zap, MessageCircleWarning } from "lucide-react";
+import { BarChart3, TrendingUp, TrendingDown, Minus, Mic, Zap, MessageCircleWarning, Layers, Sparkles } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area,
@@ -46,6 +46,70 @@ export default function CoachingPage() {
   const navigate = useNavigate();
   const { sidebarOpen } = useSidebarVisibility();
   const { notes } = useNotes();
+  const api = getElectronAPI();
+
+  const accountRoleId = useMemo(() => {
+    try {
+      const raw = localStorage.getItem("syag-account");
+      if (raw) return JSON.parse(raw)?.roleId as string | undefined;
+    } catch {
+      /* ignore */
+    }
+    return undefined;
+  }, []);
+
+  const habitTagCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const n of notes) {
+      for (const t of n.coachingMetrics?.conversationInsights?.habitTags ?? []) {
+        m.set(t, (m.get(t) ?? 0) + 1);
+      }
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  }, [notes]);
+
+  const notesWithConversationInsights = useMemo(() => {
+    return notes
+      .filter((n) => n.coachingMetrics?.conversationInsights?.headline)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .slice(-12);
+  }, [notes]);
+
+  const [crossMeeting, setCrossMeeting] = useState<{
+    summaryHeadline: string;
+    themesParagraph: string;
+    focusNext: string;
+    recurringTags: string[];
+  } | null>(null);
+  const [crossLoading, setCrossLoading] = useState(false);
+  const [crossError, setCrossError] = useState<string | null>(null);
+
+  const runAggregateInsights = useCallback(async () => {
+    if (!api?.coaching?.aggregateInsights || !accountRoleId || notesWithConversationInsights.length < 2) return;
+    setCrossLoading(true);
+    setCrossError(null);
+    try {
+      const payload = notesWithConversationInsights.map((n) => ({
+        title: n.title || "Untitled",
+        date: n.date,
+        headline: n.coachingMetrics!.conversationInsights!.headline,
+        narrative: n.coachingMetrics!.conversationInsights!.narrative,
+        habitTags: n.coachingMetrics!.conversationInsights!.habitTags ?? [],
+        overallScore: n.coachingMetrics!.overallScore,
+      }));
+      const r = await api.coaching.aggregateInsights(payload, accountRoleId);
+      if (r) setCrossMeeting(r);
+      else {
+        setCrossMeeting(null);
+        setCrossError("Couldn’t generate cross-meeting insights. Check your AI model in Settings and try again.");
+      }
+    } catch {
+      setCrossMeeting(null);
+      setCrossError("Something went wrong. Try again in a moment.");
+    } finally {
+      setCrossLoading(false);
+    }
+  }, [api, accountRoleId, notesWithConversationInsights]);
 
   const meetings: MeetingData[] = useMemo(() => {
     return notes
@@ -128,7 +192,9 @@ export default function CoachingPage() {
               </div>
               <div>
                 <h1 className="font-display text-xl font-semibold text-foreground">Speech Coaching</h1>
-                <p className="text-xs text-muted-foreground">Track your communication skills over time</p>
+                <p className="text-xs text-muted-foreground">
+                  Track speaking metrics, conversation patterns, and improvement over time
+                </p>
               </div>
             </div>
 
@@ -171,6 +237,78 @@ export default function CoachingPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Cross-meeting conversation patterns */}
+                {notesWithConversationInsights.length >= 2 && accountRoleId && (
+                  <div className="rounded-xl border border-primary/25 bg-primary/5 p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-xs font-medium text-primary uppercase tracking-wider flex items-center gap-1.5">
+                          <Layers className="h-3.5 w-3.5" />
+                          Across recent meetings
+                        </h3>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Synthesize themes from up to 12 meetings with conversation analysis (uses your AI model).
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void runAggregateInsights()}
+                        disabled={crossLoading}
+                        className="shrink-0 rounded-md border border-primary/40 bg-background px-3 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+                      >
+                        {crossLoading ? "Working…" : crossMeeting ? "Refresh" : "Generate"}
+                      </button>
+                    </div>
+                    {crossError && (
+                      <p className="text-[11px] text-destructive">{crossError}</p>
+                    )}
+                    {crossMeeting && (
+                      <div className="space-y-2 rounded-lg border border-border bg-card/90 p-3">
+                        <p className="text-[14px] font-semibold text-foreground">{crossMeeting.summaryHeadline}</p>
+                        <p className="text-[12px] text-foreground leading-relaxed">{crossMeeting.themesParagraph}</p>
+                        <div className="rounded-md bg-muted/50 px-3 py-2">
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                            Focus next
+                          </p>
+                          <p className="text-[12px] text-foreground">{crossMeeting.focusNext}</p>
+                        </div>
+                        {crossMeeting.recurringTags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {crossMeeting.recurringTags.map((t) => (
+                              <span
+                                key={t}
+                                className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-secondary-foreground"
+                              >
+                                {t.replace(/_/g, " ")}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {habitTagCounts.length > 0 && (
+                  <div className="rounded-xl border border-border bg-card p-4">
+                    <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                      <Sparkles className="h-3 w-3" />
+                      Habit tags (all analyzed notes)
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {habitTagCounts.map(([tag, count]) => (
+                        <span
+                          key={tag}
+                          className="rounded-md border border-border bg-muted/40 px-2.5 py-1 text-[11px] text-foreground"
+                        >
+                          <span className="font-medium">{tag.replace(/_/g, " ")}</span>
+                          <span className="text-muted-foreground ml-1">×{count}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Overall Score Trend */}
                 <div className="rounded-xl border border-border bg-card p-4">
@@ -398,6 +536,11 @@ export default function CoachingPage() {
                         <div className="min-w-0">
                           <div className="text-[13px] font-medium text-foreground truncate">{m.title}</div>
                           <div className="text-[10px] text-muted-foreground">{m.date}</div>
+                          {m.metrics.conversationInsights?.headline && (
+                            <div className="text-[10px] text-muted-foreground/80 truncate mt-0.5 italic">
+                              {m.metrics.conversationInsights.headline}
+                            </div>
+                          )}
                         </div>
                         <div className="flex items-center gap-3 flex-shrink-0">
                           <div className="text-[10px] text-muted-foreground tabular-nums">

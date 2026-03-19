@@ -115,6 +115,20 @@ const MIGRATIONS: { version: number; up: string[] }[] = [
       `CREATE INDEX IF NOT EXISTS idx_kb_chunks_checksum ON kb_chunks(checksum)`,
     ]
   },
+  {
+    version: 6,
+    up: [
+      `CREATE TABLE IF NOT EXISTS local_calendar_blocks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        start_iso TEXT NOT NULL,
+        end_iso TEXT NOT NULL,
+        note_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_local_blocks_start ON local_calendar_blocks(start_iso)`,
+    ]
+  },
 ]
 
 export function runMigrations(db: Database.Database): void {

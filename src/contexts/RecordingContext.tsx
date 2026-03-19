@@ -275,20 +275,17 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
 
   const clearCaptureError = useCallback(() => setCaptureError(null), []);
 
-  const startAudioCapture = useCallback(async (sttModel: string, options?: { meetingTitle?: string; vocabulary?: string[] }) => {
-    if (!api) return;
-    setCaptureError(null);
-    setSttStatus('idle');
-    setSttErrorMessage(null);
-    setLastSuccessfulTranscriptTime(null);
-
-    // Clean up any lingering audio resources from a previous session
+  /** Release mic + system audio + worklet/context only. Does not call recording.stop/pause. */
+  const releaseMediaOnly = useCallback(() => {
     if (workletNodeRef.current) {
-      try { workletNodeRef.current.disconnect(); } catch {}
+      try {
+        workletNodeRef.current.port.postMessage({ type: 'stop' });
+        workletNodeRef.current.disconnect();
+      } catch {}
       workletNodeRef.current = null;
     }
     if (audioContextRef.current) {
-      try { audioContextRef.current.close(); } catch {}
+      audioContextRef.current.close().catch(() => {});
       audioContextRef.current = null;
     }
     if (micStreamRef.current) {
@@ -299,6 +296,104 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       systemStreamRef.current.getTracks().forEach(t => t.stop());
       systemStreamRef.current = null;
     }
+    setIsCapturing(false);
+  }, []);
+
+  /** Acquire mic + optional system audio and wire to worklet. Sets refs and isCapturing. Caller must call api.recording.start or resume. */
+  const acquireMediaAndWorklet = useCallback(async (preferredDeviceId: string | undefined) => {
+    if (!api) return;
+    const audioCtx = new AudioContext({ sampleRate: 16000 });
+    audioContextRef.current = audioCtx;
+
+    const workletCandidates = isElectron
+      ? [
+          new URL('./audio-processor.js', window.location.href).href,
+          '/audio-processor.js',
+          new URL('audio-processor.js', window.location.origin + '/').href,
+        ]
+      : ['/audio-processor.js'];
+    let workletLoaded = false;
+    for (const workletUrl of workletCandidates) {
+      try {
+        await audioCtx.audioWorklet.addModule(workletUrl);
+        workletLoaded = true;
+        break;
+      } catch (e) {
+        console.warn('Worklet load failed for', workletUrl, e);
+      }
+    }
+    if (!workletLoaded) {
+      await audioCtx.close();
+      audioContextRef.current = null;
+      throw new Error('Could not load audio capture. Try restarting the app.');
+    }
+
+    const merger = audioCtx.createChannelMerger(2);
+    const worklet = new AudioWorkletNode(audioCtx, 'syag-audio-processor');
+    workletNodeRef.current = worklet;
+
+    worklet.port.onmessage = (event: MessageEvent) => {
+      if (event.data.type === 'audio-chunk') {
+        const channel = event.data.channel !== undefined ? event.data.channel : 0;
+        api.recording.sendAudioChunk(event.data.pcm, channel);
+      }
+    };
+
+    try {
+      const audioConstraints: MediaTrackConstraints = {
+        sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true,
+      };
+      if (preferredDeviceId) {
+        audioConstraints.deviceId = { exact: preferredDeviceId };
+      }
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      micStreamRef.current = micStream;
+      const micSource = audioCtx.createMediaStreamSource(micStream);
+      micSource.connect(merger, 0, 0);
+    } catch (micErr) {
+      console.warn('Microphone access denied or unavailable:', micErr);
+    }
+
+    try {
+      const sources = await api.audio.getDesktopSources();
+      if (sources.length > 0) {
+        const systemStream = await (navigator.mediaDevices as any).getUserMedia({
+          audio: { mandatory: { chromeMediaSource: 'desktop' } },
+          video: {
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              minWidth: 1, maxWidth: 1, minHeight: 1, maxHeight: 1,
+            },
+          },
+        });
+        systemStream.getVideoTracks().forEach((t: MediaStreamTrack) => t.stop());
+        systemStreamRef.current = systemStream;
+        const systemSource = audioCtx.createMediaStreamSource(systemStream);
+        systemSource.connect(merger, 0, 1);
+      }
+    } catch (sysErr) {
+      console.warn('System audio capture not available:', sysErr);
+    }
+
+    if (!micStreamRef.current && !systemStreamRef.current) {
+      releaseMediaOnly();
+      setCaptureError(CAPTURE_ERROR_NO_SOURCE);
+      throw new Error(CAPTURE_ERROR_NO_SOURCE);
+    }
+
+    merger.connect(worklet);
+    worklet.connect(audioCtx.destination);
+    setIsCapturing(true);
+  }, [api, releaseMediaOnly]);
+
+  const startAudioCapture = useCallback(async (sttModel: string, options?: { meetingTitle?: string; vocabulary?: string[] }) => {
+    if (!api) return;
+    setCaptureError(null);
+    setSttStatus('idle');
+    setSttErrorMessage(null);
+    setLastSuccessfulTranscriptTime(null);
+
+    releaseMediaOnly();
 
     // Read the user-selected audio device from DB
     let preferredDeviceId: string | undefined;
@@ -326,98 +421,7 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      const audioCtx = new AudioContext({ sampleRate: 16000 });
-      audioContextRef.current = audioCtx;
-
-      const workletCandidates = isElectron
-        ? [
-            new URL('./audio-processor.js', window.location.href).href,
-            '/audio-processor.js',
-            new URL('audio-processor.js', window.location.origin + '/').href,
-          ]
-        : ['/audio-processor.js'];
-      let workletLoaded = false;
-      for (const workletUrl of workletCandidates) {
-        try {
-          await audioCtx.audioWorklet.addModule(workletUrl);
-          workletLoaded = true;
-          break;
-        } catch (e) {
-          console.warn('Worklet load failed for', workletUrl, e);
-        }
-      }
-      if (!workletLoaded) {
-        const msg = 'Could not load audio capture. Try restarting the app.';
-        setCaptureError(msg);
-        setIsCapturing(false);
-        throw new Error(msg);
-      }
-
-      const merger = audioCtx.createChannelMerger(2);
-      const worklet = new AudioWorkletNode(audioCtx, 'syag-audio-processor');
-      workletNodeRef.current = worklet;
-
-      worklet.port.onmessage = (event) => {
-        if (event.data.type === 'audio-chunk') {
-          const channel = event.data.channel !== undefined ? event.data.channel : 0;
-          api.recording.sendAudioChunk(event.data.pcm, channel);
-        }
-      };
-
-      // 1. Capture microphone audio (use user-selected device if set)
-      try {
-        const audioConstraints: MediaTrackConstraints = {
-          sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true,
-        };
-        if (preferredDeviceId) {
-          audioConstraints.deviceId = { exact: preferredDeviceId };
-        }
-        const micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-        micStreamRef.current = micStream;
-        const micSource = audioCtx.createMediaStreamSource(micStream);
-        micSource.connect(merger, 0, 0);
-      } catch (micErr) {
-        console.warn('Microphone access denied or unavailable:', micErr);
-      }
-
-      // 2. Capture system audio via desktopCapturer
-      try {
-        const sources = await api.audio.getDesktopSources();
-        if (sources.length > 0) {
-          const systemStream = await (navigator.mediaDevices as any).getUserMedia({
-            audio: {
-              mandatory: {
-                chromeMediaSource: 'desktop',
-              }
-            },
-            video: {
-              mandatory: {
-                chromeMediaSource: 'desktop',
-                minWidth: 1,
-                maxWidth: 1,
-                minHeight: 1,
-                maxHeight: 1,
-              }
-            }
-          });
-          // Remove the video track, we only need audio
-          systemStream.getVideoTracks().forEach((t: MediaStreamTrack) => t.stop());
-
-          systemStreamRef.current = systemStream;
-          const systemSource = audioCtx.createMediaStreamSource(systemStream);
-          systemSource.connect(merger, 0, 1);
-        }
-      } catch (sysErr) {
-        console.warn('System audio capture not available (screen recording permission may be needed):', sysErr);
-      }
-
-      if (!micStreamRef.current && !systemStreamRef.current) {
-        setCaptureError(CAPTURE_ERROR_NO_SOURCE);
-      }
-
-      merger.connect(worklet);
-      worklet.connect(audioCtx.destination);
-      setIsCapturing(true);
+      await acquireMediaAndWorklet(preferredDeviceId);
 
       // When no STT model is configured, use Web Speech API as zero-config fallback
       if (!sttModel) {
@@ -433,9 +437,10 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       }
       throw err;
     }
-  }, [api, startSpeechRecognition]);
+  }, [api, releaseMediaOnly, acquireMediaAndWorklet, startSpeechRecognition]);
 
   const pauseAudioCapture = useCallback(async () => {
+    releaseMediaOnly();
     if (api) {
       await api.recording.pause();
     }
@@ -445,50 +450,40 @@ export function RecordingProvider({ children }: { children: ReactNode }) {
       setUsingWebSpeech(false);
     }
     setActiveSession(prev => prev ? { ...prev, isRecording: false } : null);
-  }, [api]);
+  }, [api, releaseMediaOnly]);
 
   const resumeAudioCapture = useCallback(async (sttModel?: string) => {
-    if (api) {
+    if (!api) return;
+    setCaptureError(null);
+    let preferredDeviceId: string | undefined;
+    try {
+      const storedDevice = await api.db.settings.get('audio-input-device');
+      if (storedDevice) preferredDeviceId = storedDevice;
+    } catch {}
+    try {
+      await acquireMediaAndWorklet(preferredDeviceId);
       await api.recording.resume({ sttModel: sttModel ?? undefined });
+      setActiveSession(prev => prev ? { ...prev, isRecording: true } : null);
+      if (!sttModel) {
+        startSpeechRecognition();
+      }
+    } catch (err) {
+      console.error('Failed to resume audio capture:', err);
+      setIsCapturing(false);
+      setCaptureError(err instanceof Error ? err.message : 'Failed to resume audio capture.');
+      throw err;
     }
-    setActiveSession(prev => prev ? { ...prev, isRecording: true } : null);
-    // Restart Web Speech API fallback if no STT model
-    if (!sttModel && !speechRecRef.current) {
-      startSpeechRecognition();
-    }
-  }, [api, startSpeechRecognition]);
+  }, [api, acquireMediaAndWorklet, startSpeechRecognition]);
 
   const stopAudioCapture = useCallback(async () => {
-    setIsCapturing(false);
     stopSpeechRecognition();
-
-    if (workletNodeRef.current) {
-      workletNodeRef.current.port.postMessage({ type: 'stop' });
-      workletNodeRef.current.disconnect();
-      workletNodeRef.current = null;
-    }
-
-    if (audioContextRef.current) {
-      await audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach(t => t.stop());
-      micStreamRef.current = null;
-    }
-
-    if (systemStreamRef.current) {
-      systemStreamRef.current.getTracks().forEach(t => t.stop());
-      systemStreamRef.current = null;
-    }
-
+    releaseMediaOnly();
     if (api) {
       await api.recording.stop();
     }
     setSttStatus('idle');
     setSttErrorMessage(null);
-  }, [api, stopSpeechRecognition]);
+  }, [api, releaseMediaOnly, stopSpeechRecognition]);
 
   const isActive = !!activeSession;
 

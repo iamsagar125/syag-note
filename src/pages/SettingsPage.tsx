@@ -10,8 +10,13 @@ import { Sidebar, SidebarCollapseButton } from "@/components/Sidebar";
 import { useSidebarVisibility } from "@/contexts/SidebarVisibilityContext";
 import { cn } from "@/lib/utils";
 import { useState, useEffect, useRef, useMemo } from "react";
-import { useModelSettings, localModels } from "@/contexts/ModelSettingsContext";
-import { useCalendar } from "@/contexts/CalendarContext";
+import { useSearchParams } from "react-router-dom";
+import { useModelSettings, localModels, enterpriseProviders } from "@/contexts/ModelSettingsContext";
+import {
+  useCalendar,
+  GOOGLE_CALENDAR_FEED_ID,
+  MICROSOFT_CALENDAR_FEED_ID,
+} from "@/contexts/CalendarContext";
 import { ICSDialog, type CalendarProviderId } from "@/components/ICSDialog";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -705,7 +710,7 @@ const defaultPrefs: Preferences = {
   showRecordingIndicator: true,
   launchOnStartup: false,
   autoReposition: true,
-  hideFromScreenShare: true,
+  hideFromScreenShare: false,
   appearance: "light",
 };
 
@@ -1036,8 +1041,9 @@ function TemplatesSection() {
 }
 
 export default function SettingsPage() {
+  const [searchParams] = useSearchParams();
   const modelSettings = useModelSettings();
-  const { icsSource, clearCalendar } = useCalendar();
+  const { icsFeeds, removeCalendarFeed, clearCalendar } = useCalendar();
   const [calendarProvider, setCalendarProvider] = useState<CalendarProviderId | null>(getStoredCalendarProvider);
   const [icsDialogOpen, setIcsDialogOpen] = useState(false);
   const [icsDialogProvider, setIcsDialogProvider] = useState<CalendarProviderId | null>(null);
@@ -1061,7 +1067,31 @@ export default function SettingsPage() {
 
   const [toggles, setToggles] = useState<Record<string, boolean>>({ ...DEFAULT_TOGGLES });
   const [togglesLoaded, setTogglesLoaded] = useState(false);
+  const [trayAgendaEnabled, setTrayAgendaEnabled] = useState(false);
+  const [trayCalendarRange, setTrayCalendarRange] = useState<"today" | "today_tomorrow">("today_tomorrow");
+  const [trayCalendarClick, setTrayCalendarClick] = useState<"note" | "calendar">("note");
   const api = getElectronAPI();
+
+  useEffect(() => {
+    const sec = searchParams.get("section");
+    if (sec && sections.some((s) => s.id === sec)) setActive(sec);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!api) return;
+    (async () => {
+      try {
+        const a = await api.db.settings.get("tray-calendar-agenda");
+        setTrayAgendaEnabled(a === "true");
+        const r = await api.db.settings.get("tray-calendar-range");
+        if (r === "today" || r === "today_tomorrow") setTrayCalendarRange(r);
+        const c = await api.db.settings.get("tray-calendar-click");
+        if (c === "note" || c === "calendar") setTrayCalendarClick(c);
+      } catch {
+        /* defaults */
+      }
+    })();
+  }, [api]);
 
   useEffect(() => {
     if (api?.app?.getVersion) {
@@ -1289,6 +1319,13 @@ export default function SettingsPage() {
                     <SettingRow label="Auto-reposition during meetings" description="Syag will move to the side when you join a meeting, so you can keep taking notes">
                       <Toggle enabled={prefs.autoReposition} onToggle={() => updatePref("autoReposition", !prefs.autoReposition)} />
                     </SettingRow>
+                    <SettingRow label="Hide from screen sharing" description="Prevents the Syag window from appearing in screen shares and recordings — invisible to others on calls">
+                      <Toggle enabled={prefs.hideFromScreenShare ?? false} onToggle={() => {
+                        const newVal = !(prefs.hideFromScreenShare ?? false);
+                        updatePref("hideFromScreenShare", newVal);
+                        api?.contentProtection?.set(newVal);
+                      }} />
+                    </SettingRow>
                   </div>
                   <div>
                     <label className="text-[13px] font-medium text-foreground mb-2 block">Appearance</label>
@@ -1447,6 +1484,31 @@ export default function SettingsPage() {
                     </div>
                     <p className="text-[11px] text-muted-foreground -mt-2">Download models to run entirely on your device. With local models, transcription and summaries stay on this device.</p>
 
+                    {isElectron && (
+                      <details className="rounded-md border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+                        <summary className="cursor-pointer select-none font-medium text-foreground flex items-center gap-2 list-none [&::-webkit-details-marker]:hidden">
+                          <Info className="h-3.5 w-3.5 shrink-0 text-accent" />
+                          How local install works (step-by-step toasts)
+                        </summary>
+                        <ul className="mt-2.5 list-disc pl-4 space-y-1.5">
+                          <li>
+                            <span className="text-foreground font-medium">Whisper Large V3 Turbo</span> — Syag downloads the model file, then looks for or installs{" "}
+                            <code className="rounded bg-muted px-1 py-0.5 text-[10px]">whisper-cli</code> (build from source or{" "}
+                            <code className="rounded bg-muted px-1 py-0.5 text-[10px]">brew install whisper-cpp</code>). When it finishes, a toast lists every step.
+                          </li>
+                          <li>
+                            <span className="text-foreground font-medium">MLX Whisper</span> — Syag ensures{" "}
+                            <code className="rounded bg-muted px-1 py-0.5 text-[10px]">ffmpeg</code> (often via Homebrew), then runs{" "}
+                            <code className="rounded bg-muted px-1 py-0.5 text-[10px]">pip</code> for the Python package. You need Python 3; the toast shows what ran and what to run in{" "}
+                            <Terminal className="inline h-3 w-3 align-text-bottom" /> Terminal if something fails.
+                          </li>
+                          <li className="list-none pl-0 -ml-4 text-[10px] pt-1">
+                            More detail: <code className="rounded bg-muted px-1 py-0.5">docs/local-stt-setup.md</code> in the Syag repo.
+                          </li>
+                        </ul>
+                      </details>
+                    )}
+
                     <div className="space-y-1.5">
                       {localModels.map((model) => {
                         const state = downloadStates[model.id] || "idle";
@@ -1519,6 +1581,11 @@ export default function SettingsPage() {
                                 <p className="text-[10px] text-muted-foreground mt-1">
                                   {formatBytes(progress.bytesDownloaded)} / {formatBytes(progress.totalBytes)}
                                 </p>
+                                {model.id === "whisper-large-v3-turbo" && progress.percent >= 100 && (
+                                  <p className="text-[10px] text-muted-foreground mt-1.5 leading-snug">
+                                    Model file done. Setting up <code className="rounded bg-muted px-0.5">whisper-cli</code> (build or Homebrew) — can take several minutes. You’ll get a step-by-step toast when finished.
+                                  </p>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1704,8 +1771,70 @@ export default function SettingsPage() {
                   <SettingRow label="Only notify when microphone is in use" description="Fewer false positives: show “Meeting detected” only when a meeting app is in use and the mic is active (ad-hoc calls). Turn off if you join muted and miss prompts.">
                     <Toggle enabled={toggles.meetingDetectionRequireMic} onToggle={() => toggle("meetingDetectionRequireMic")} />
                   </SettingRow>
+                  {isElectron && (
+                    <div className="rounded-lg border border-border bg-card/40 p-4 space-y-3">
+                      <h3 className="text-[13px] font-medium text-foreground">Menu bar & tray</h3>
+                      <p className="text-[11px] text-muted-foreground -mt-1">
+                        macOS menu bar icon: show a compact agenda popover instead of only focusing the app when you click the icon (when not recording).
+                      </p>
+                      <SettingRow label="Show agenda in tray" description="Open a Notion-style agenda when clicking the Syag menu bar icon.">
+                        <Toggle
+                          enabled={trayAgendaEnabled}
+                          onToggle={() => {
+                            const next = !trayAgendaEnabled;
+                            setTrayAgendaEnabled(next);
+                            api?.db.settings.set("tray-calendar-agenda", next ? "true" : "false").catch(console.error);
+                          }}
+                        />
+                      </SettingRow>
+                      {trayAgendaEnabled && (
+                        <>
+                          <div className="flex items-center justify-between rounded-md border border-border bg-card p-3 gap-4">
+                            <div className="min-w-0">
+                              <span className="text-[13px] text-foreground">Agenda range</span>
+                              <p className="text-[11px] text-muted-foreground mt-0.5">Which days appear in the tray popover</p>
+                            </div>
+                            <select
+                              value={trayCalendarRange}
+                              onChange={(e) => {
+                                const v = e.target.value === "today" ? "today" : "today_tomorrow";
+                                setTrayCalendarRange(v);
+                                api?.db.settings.set("tray-calendar-range", v).catch(console.error);
+                              }}
+                              className="text-[12px] rounded-md border border-border bg-background px-2 py-1.5 max-w-[11rem]"
+                            >
+                              <option value="today">Today only</option>
+                              <option value="today_tomorrow">Today + tomorrow</option>
+                            </select>
+                          </div>
+                          <div className="flex items-center justify-between rounded-md border border-border bg-card p-3 gap-4">
+                            <div className="min-w-0">
+                              <span className="text-[13px] text-foreground">Clicking an event</span>
+                              <p className="text-[11px] text-muted-foreground mt-0.5">Where to go when you select a row</p>
+                            </div>
+                            <select
+                              value={trayCalendarClick}
+                              onChange={(e) => {
+                                const v = e.target.value === "calendar" ? "calendar" : "note";
+                                setTrayCalendarClick(v);
+                                api?.db.settings.set("tray-calendar-click", v).catch(console.error);
+                              }}
+                              className="text-[12px] rounded-md border border-border bg-background px-2 py-1.5 max-w-[11rem]"
+                            >
+                              <option value="note">Open linked note / new note</option>
+                              <option value="calendar">Open Syag calendar</option>
+                            </select>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <h3 className="text-[13px] font-medium text-foreground">Connected Calendars</h3>
+                    <p className="text-[11px] text-muted-foreground -mt-1 mb-2">
+                      Add several ICS feeds or use OAuth (below in Integrations). On the Calendar page, use{" "}
+                      <strong className="text-foreground/90">All calendars</strong> or pick one source — like Google Calendar or Notion.
+                    </p>
                     {(
                       [
                         { id: "google" as CalendarProviderId, name: "Google Calendar", desc: "Sync with Google Calendar" },
@@ -1713,7 +1842,7 @@ export default function SettingsPage() {
                         { id: "apple" as CalendarProviderId, name: "Apple Calendar", desc: "Sync with iCloud Calendar" },
                       ] as const
                     ).map((cal) => {
-                      const connected = !!icsSource && calendarProvider === cal.id;
+                      const connected = icsFeeds.some((f) => f.providerHint === cal.id);
                       return (
                         <div key={cal.name} className="flex items-center justify-between rounded-md border border-border bg-card p-3">
                           <div>
@@ -1723,9 +1852,13 @@ export default function SettingsPage() {
                           {connected ? (
                             <button
                               onClick={() => {
-                                clearCalendar();
+                                icsFeeds
+                                  .filter((f) => f.providerHint === cal.id)
+                                  .forEach((f) => removeCalendarFeed(f.id));
                                 setCalendarProvider(null);
-                                try { localStorage.removeItem(CALENDAR_PROVIDER_KEY); } catch {}
+                                try {
+                                  localStorage.removeItem(CALENDAR_PROVIDER_KEY);
+                                } catch {}
                               }}
                               className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10 transition-colors"
                             >
@@ -2064,6 +2197,7 @@ function TeamsIntegrationRow() {
 }
 
 function GoogleCalendarIntegrationRow() {
+  const { removeCalendarFeed, refetchAllCalendars } = useCalendar();
   const api = getElectronAPI();
   const [connected, setConnected] = useState(false);
   const [email, setEmail] = useState("");
@@ -2106,6 +2240,7 @@ function GoogleCalendarIntegrationRow() {
         setEmail(result.email || "Connected");
         setShowSetup(false);
         toast.success("Google Calendar connected");
+        void refetchAllCalendars();
       } else {
         setError(result?.error || "Connection failed");
       }
@@ -2118,6 +2253,7 @@ function GoogleCalendarIntegrationRow() {
 
   const handleDisconnect = async () => {
     await api?.keychain?.delete("google-calendar-config");
+    removeCalendarFeed(GOOGLE_CALENDAR_FEED_ID);
     setConnected(false);
     setEmail("");
     toast.success("Google Calendar disconnected");
@@ -2218,6 +2354,7 @@ function GoogleCalendarIntegrationRow() {
 }
 
 function MicrosoftCalendarIntegrationRow() {
+  const { removeCalendarFeed, refetchAllCalendars } = useCalendar();
   const api = getElectronAPI();
   const [connected, setConnected] = useState(false);
   const [email, setEmail] = useState("");
@@ -2260,6 +2397,7 @@ function MicrosoftCalendarIntegrationRow() {
         setEmail(result.email || "Connected");
         setShowSetup(false);
         toast.success("Microsoft Calendar connected");
+        void refetchAllCalendars();
       } else {
         setError(result?.error || "Connection failed");
       }
@@ -2272,6 +2410,7 @@ function MicrosoftCalendarIntegrationRow() {
 
   const handleDisconnect = async () => {
     await api?.keychain?.delete("microsoft-calendar-config");
+    removeCalendarFeed(MICROSOFT_CALENDAR_FEED_ID);
     setConnected(false);
     setEmail("");
     toast.success("Microsoft Calendar disconnected");

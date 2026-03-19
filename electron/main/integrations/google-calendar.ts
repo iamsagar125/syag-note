@@ -17,20 +17,30 @@ export interface GoogleCalendarEvent {
 
 const CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 
+export interface GoogleCalendarFetchRange {
+  /** Days before now to include (default 30). */
+  daysPast?: number
+  /** Days after now to include (default 30). */
+  daysAhead?: number
+}
+
 /**
- * Fetch upcoming calendar events from Google Calendar.
- * Returns events from now to 7 days ahead.
+ * Fetch calendar events from Google Calendar.
+ * Default window: 30 days past through 30 days ahead.
  */
 export async function fetchGoogleCalendarEvents(
   accessToken: string,
   calendarId = 'primary',
-  daysAhead = 7
+  range: GoogleCalendarFetchRange = {}
 ): Promise<{ ok: boolean; events: GoogleCalendarEvent[]; error?: string }> {
+  const daysPast = range.daysPast ?? 30
+  const daysAhead = range.daysAhead ?? 30
   const now = new Date()
+  const past = new Date(now.getTime() - daysPast * 24 * 60 * 60 * 1000)
   const future = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000)
 
   const params = new URLSearchParams({
-    timeMin: now.toISOString(),
+    timeMin: past.toISOString(),
     timeMax: future.toISOString(),
     singleEvents: 'true',
     orderBy: 'startTime',

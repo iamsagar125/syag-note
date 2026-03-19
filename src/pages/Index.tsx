@@ -33,13 +33,13 @@ const Index = () => {
     },
     [deleteNote, activeSession?.noteId, clearSession]
   );
-  const { events, icsSource } = useCalendar();
+  const { displayEvents, icsSource } = useCalendar();
   const [icsOpen, setIcsOpen] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
 
   const now = new Date();
   // Show events until their end time (e.g. 1pm–1:30pm stays in Coming up until 1:30pm)
-  const upcomingEventsList = events
+  const upcomingEventsList = displayEvents
     .filter((e) => isAfter(new Date(e.end), now))
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
     .slice(0, 5);

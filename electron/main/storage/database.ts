@@ -124,6 +124,53 @@ export function deleteFolder(id: string): void {
   getDb().prepare('DELETE FROM folders WHERE id = ?').run(id)
 }
 
+// --- Local calendar blocks (Syag-only, not synced to Google/Outlook) ---
+
+export interface LocalCalendarBlockRow {
+  id: string
+  title: string
+  startIso: string
+  endIso: string
+  noteId: string | null
+  createdAt: string
+}
+
+export function getAllLocalCalendarBlocks(): LocalCalendarBlockRow[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, title, start_iso, end_iso, note_id, created_at
+       FROM local_calendar_blocks ORDER BY start_iso ASC`
+    )
+    .all() as any[]
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    startIso: r.start_iso,
+    endIso: r.end_iso,
+    noteId: r.note_id ?? null,
+    createdAt: r.created_at,
+  }))
+}
+
+export function addLocalCalendarBlock(block: {
+  id: string
+  title: string
+  startIso: string
+  endIso: string
+  noteId?: string | null
+}): void {
+  getDb()
+    .prepare(
+      `INSERT INTO local_calendar_blocks (id, title, start_iso, end_iso, note_id)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(block.id, block.title, block.startIso, block.endIso, block.noteId ?? null)
+}
+
+export function deleteLocalCalendarBlock(id: string): void {
+  getDb().prepare('DELETE FROM local_calendar_blocks WHERE id = ?').run(id)
+}
+
 // --- Settings KV ---
 
 export function getSetting(key: string): string | null {

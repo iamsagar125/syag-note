@@ -9,6 +9,14 @@ export interface CalendarEvent {
   joinLink?: string;
   /** True when DTSTART is date-only (all-day / full-day block) */
   isAllDay?: boolean;
+  /** Synced from provider/ICS vs Syag-only block */
+  source?: "synced" | "local";
+  /** Linked note for local blocks */
+  noteId?: string | null;
+  /** Which connected calendar this event came from (e.g. google, microsoft, ics-xxx) */
+  calendarFeedId?: string;
+  /** Human-readable calendar name for UI */
+  calendarName?: string;
 }
 
 // ── Join-link extraction ────────────────────────────────────────────────

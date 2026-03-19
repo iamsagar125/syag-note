@@ -41,3 +41,6 @@ keychain.enc
 
 # Optional provider bundles (distribute separately; do not commit)
 electron/main/cloud/optional-providers-dist/
+
+# Cursor IDE
+.cursor/

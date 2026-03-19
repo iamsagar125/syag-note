@@ -9,7 +9,7 @@ import {
   Mic, MicOff, Pause, Play, Eye, EyeOff, Square, Search,
   Share2, MoreHorizontal,
   Calendar, Clock, Plus, FolderOpen, Check, X, Hash,
-  CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, FileText
+  CheckCircle2, Circle, Loader2, Copy, Trash2, ChevronDown, FileText, Info
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { KBSuggestionsPanel, type KBSuggestion } from "@/components/KBSuggestionsPanel";
@@ -22,6 +22,8 @@ import { useElapsedTime } from "@/hooks/useElapsedTime";
 import { toast } from "sonner";
 import type { SummaryData } from "@/components/EditableSummary";
 import { groupTranscriptBySpeaker } from "@/lib/transcript-utils";
+import { useNameMentionContext } from "@/hooks/useNameMentionContext";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { BUILTIN_TEMPLATES, BUILTIN_TEMPLATE_IDS } from "@/data/templates";
 
@@ -247,6 +249,15 @@ export default function NewNotePage() {
     if (lines) parts.push(`TRANSCRIPT:\n${lines}`);
     return parts.join('\n\n') || undefined;
   }, [usingRealAudio, transcriptLines, personalNotes]);
+
+  const { mentionHint, mentionHintLoading, onDismissMentionHint } = useNameMentionContext(
+    transcriptLines,
+    recordingState,
+    selectedAIModel,
+    title || "New note",
+    usingRealAudio,
+    noteId
+  );
 
   // Tick every 10s while recording so we can show "no transcription for a while" after 45s
   const [, setStaleTick] = useState(0);
@@ -1084,6 +1095,9 @@ export default function NewNotePage() {
                 meetingTitle={title || "New note"}
                 noteContext={askBarNoteContext}
                 recordingState={recordingState}
+                mentionContextHint={mentionHint}
+                mentionHintLoading={mentionHintLoading}
+                onDismissMentionHint={onDismissMentionHint}
                 transcriptVisible={transcriptVisible}
                 hideTranscriptToggle={showSummaryControls}
                 onResumeRecording={handleResume}
@@ -1135,6 +1149,22 @@ export default function NewNotePage() {
                     <span className="text-[12px] font-medium uppercase tracking-wider text-foreground/80">
                       {recordingState === "recording" ? "Live Transcript" : "Transcript"}
                     </span>
+                    {usingRealAudio && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+                            aria-label="About Me and Them labels"
+                          >
+                            <Info className="h-3 w-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-xs text-[11px] leading-snug">
+                          <strong>Me</strong> = your microphone. <strong>Them</strong> = meeting/system audio. Labels follow audio source, not names in the chat. Unmute your mic for reliable &quot;Me&quot; lines; short replies may show as &quot;Them&quot; if only picked up from the meeting mix.
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
                     {(recordingState === "recording" || recordingState === "paused") && (
                       <div className="flex items-center gap-1.5">
                         {recordingState === "recording" ? (

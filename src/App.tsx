@@ -28,8 +28,10 @@ import OnboardingPage from "./pages/OnboardingPage";
 import PeoplePage from "./pages/PeoplePage";
 import CommitmentsPage from "./pages/CommitmentsPage";
 import NotFound from "./pages/NotFound";
+import TrayAgendaPage from "./pages/TrayAgendaPage";
 import { TrayMenu } from "@/components/TrayMenu";
 import { MeetingDetectionHandler } from "@/components/MeetingDetectionHandler";
+import { TrayAgendaSync } from "@/components/TrayAgendaSync";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SearchCommandProvider } from "@/components/SearchCommand";
 
@@ -68,10 +70,28 @@ function TrayNavigationHandler() {
       pauseAudioCapture();
     });
 
+    const cleanupAgendaNav = api.app.onTrayAgendaNavigate?.((data) => {
+      navigate(`${data.path}${data.search ?? ""}`);
+    });
+
+    const cleanupAgendaOpen = api.app.onTrayAgendaOpenEvent?.((payload) => {
+      if (payload.openMode === "calendar") {
+        navigate("/calendar");
+        return;
+      }
+      if (payload.noteId) {
+        navigate(`/note/${payload.noteId}`);
+        return;
+      }
+      navigate("/new-note", { state: { eventTitle: payload.title, eventId: payload.eventId } });
+    });
+
     return () => {
       cleanupNav?.();
       cleanupStartRecording?.();
       cleanupPause?.();
+      cleanupAgendaNav?.();
+      cleanupAgendaOpen?.();
     };
   }, [api, activeSession?.noteId, navigate, pauseAudioCapture]);
 
@@ -83,7 +103,7 @@ function AppContent() {
   const isOnRecordingPage = location.pathname === "/new-note";
   const onboardingDone = isOnboardingComplete();
 
-  if (!onboardingDone && location.pathname !== "/onboarding") {
+  if (!onboardingDone && location.pathname !== "/onboarding" && location.pathname !== "/tray-agenda") {
     return <Navigate to="/onboarding" replace />;
   }
 
@@ -91,6 +111,7 @@ function AppContent() {
     <>
       {!isOnRecordingPage && <GlobalRecordingBanner />}
       <MeetingDetectionHandler />
+      {isElectron && <TrayAgendaSync />}
       <TrayNavigationHandler />
       <Routes>
         <Route path="/onboarding" element={<OnboardingPage />} />
@@ -105,6 +126,7 @@ function AppContent() {
           </ErrorBoundary>
         } />
         <Route path="/calendar" element={<CalendarPage />} />
+        <Route path="/tray-agenda" element={<TrayAgendaPage />} />
         <Route path="/coaching" element={<CoachingPage />} />
         <Route path="/people" element={<PeoplePage />} />
         <Route path="/commitments" element={<CommitmentsPage />} />

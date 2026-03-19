@@ -12,8 +12,22 @@ const WHISPER_CPP_SOURCE_URL = `https://github.com/ggml-org/whisper.cpp/archive/
 
 let whisperBinaryPath: string | null = null
 let isInstallingBinary = false
-let previousContext = ''
 let activeWhisperProc: ReturnType<typeof spawn> | null = null
+
+/** User-visible install transcript (Settings → local models). */
+export type LocalSetupResult = {
+  ok: boolean
+  steps: string[]
+  error?: string
+  /** Short manual fallback for toasts / UI */
+  hint?: string
+}
+
+function logStep(steps: string[] | undefined, message: string): void {
+  if (steps) steps.push(message)
+}
+/** Last ~200 chars of transcript per stereo channel (0=mic/You, 1=system/Others) for Whisper initial_prompt continuity. */
+let previousContextByChannel: [string, string] = ['', '']
 
 export interface WordTimestamp {
   word: string
@@ -28,7 +42,7 @@ export interface STTResult {
 }
 
 export function resetContext(): void {
-  previousContext = ''
+  previousContextByChannel = ['', '']
 }
 
 /** Kill all active STT processes and workers. Call on app quit. */
@@ -64,7 +78,17 @@ export function cleanStaleTempFiles(): void {
 }
 
 export function getContext(): string {
-  return previousContext
+  return [previousContextByChannel[0], previousContextByChannel[1]].filter(Boolean).join(' ').slice(-200)
+}
+
+/** Update continuation prompt for the next chunk on this channel (call after emitting a transcript line). */
+export function setPreviousContextForChannel(channel: 0 | 1, text: string): void {
+  const t = text.trim()
+  if (t) previousContextByChannel[channel] = t.slice(-200)
+}
+
+export function getPreviousContextForChannel(channel: 0 | 1): string {
+  return previousContextByChannel[channel] || ''
 }
 
 function getBinDir(): string {
@@ -117,9 +141,13 @@ function findWhisperBinary(): string | null {
   return null
 }
 
-export async function ensureWhisperBinary(): Promise<string> {
+export async function ensureWhisperBinary(steps?: string[]): Promise<string> {
+  logStep(steps, 'Looking for whisper-cli (Syag models folder, PATH, or common Homebrew locations)…')
   const existing = findWhisperBinary()
-  if (existing) return existing
+  if (existing) {
+    logStep(steps, 'Found whisper-cli — no install needed.')
+    return existing
+  }
 
   if (isInstallingBinary) {
     throw new Error('Whisper CLI is being installed, please wait...')
@@ -128,9 +156,11 @@ export async function ensureWhisperBinary(): Promise<string> {
   isInstallingBinary = true
 
   try {
-    const builtPath = await tryBuildFromSource()
+    logStep(steps, 'whisper-cli not found. Trying build from source (needs CMake, compiler) or Homebrew install…')
+    const builtPath = await tryBuildFromSource(steps)
     if (builtPath) {
       whisperBinaryPath = builtPath
+      logStep(steps, 'whisper-cli is ready.')
       return builtPath
     }
 
@@ -143,6 +173,23 @@ export async function ensureWhisperBinary(): Promise<string> {
   }
 }
 
+/** After whisper.cpp model file is downloaded — full transcript for UI. */
+export async function ensureWhisperCliSetupResult(): Promise<LocalSetupResult> {
+  const steps: string[] = []
+  try {
+    await ensureWhisperBinary(steps)
+    return { ok: true, steps }
+  } catch (e: any) {
+    const msg = e?.message || String(e)
+    return {
+      ok: false,
+      steps,
+      error: msg,
+      hint: 'In Terminal: brew install whisper-cpp  (requires Homebrew). Or install Xcode Command Line Tools and let Syag build from source.',
+    }
+  }
+}
+
 /** Fire-and-forget: ensure whisper CLI is ready (e.g. after downloading a whisper model). */
 export function ensureWhisperBinaryInBackground(): void {
   ensureWhisperBinary()
@@ -150,14 +197,15 @@ export function ensureWhisperBinaryInBackground(): void {
     .catch((err) => console.warn('[STT] Whisper CLI setup failed:', err.message))
 }
 
-async function tryBuildFromSource(): Promise<string | null> {
+async function tryBuildFromSource(steps?: string[]): Promise<string | null> {
   const hasMake = commandExists('make')
   const hasCMake = commandExists('cmake')
   const hasCC = commandExists('cc') || commandExists('clang')
 
   if (!hasCC || (!hasMake && !hasCMake)) {
     console.log('Build tools not found, trying Homebrew install...')
-    return tryHomebrewInstall()
+    logStep(steps, 'Build tools not found (CMake/C compiler). Trying Homebrew whisper-cpp…')
+    return tryHomebrewInstall(steps)
   }
 
   const tmpDir = join(app.getPath('temp'), 'syag-whisper-build')
@@ -169,21 +217,25 @@ async function tryBuildFromSource(): Promise<string | null> {
   const destBinary = join(binDir, 'whisper-cli')
 
   try {
+    logStep(steps, 'Downloading whisper.cpp source archive…')
     console.log('Downloading whisper.cpp source...')
     await downloadFile(WHISPER_CPP_SOURCE_URL, tarPath)
 
+    logStep(steps, 'Extracting and compiling…')
     console.log('Extracting source...')
     execSync(`tar xzf "${tarPath}" -C "${tmpDir}"`, { timeout: 30000 })
 
     if (!existsSync(srcDir)) {
       console.error('Source directory not found after extraction')
-      return tryHomebrewInstall()
+      logStep(steps, 'Source layout unexpected. Trying Homebrew…')
+      return tryHomebrewInstall(steps)
     }
 
     const cpuCount = require('os').cpus().length
     const jobs = Math.min(cpuCount, 8)
 
     if (hasCMake) {
+      logStep(steps, 'Building whisper.cpp with CMake + Metal (may take several minutes)…')
       console.log('Building whisper.cpp with CMake...')
       const buildDir = join(srcDir, 'build')
       mkdirSync(buildDir, { recursive: true })
@@ -208,6 +260,7 @@ async function tryBuildFromSource(): Promise<string | null> {
         if (existsSync(candidate)) {
           execSync(`cp "${candidate}" "${destBinary}"`)
           chmodSync(destBinary, 0o755)
+          logStep(steps, 'Built whisper-cli (CMake) into your Syag models folder.')
           console.log('whisper-cli built and installed successfully')
           return destBinary
         }
@@ -215,6 +268,7 @@ async function tryBuildFromSource(): Promise<string | null> {
     }
 
     if (hasMake && existsSync(join(srcDir, 'Makefile'))) {
+      logStep(steps, 'Building whisper.cpp with Make + Metal (may take several minutes)…')
       console.log('Building whisper.cpp with Make...')
       execSync(`make -j${jobs}`, {
         cwd: srcDir,
@@ -231,6 +285,7 @@ async function tryBuildFromSource(): Promise<string | null> {
         if (existsSync(candidate)) {
           execSync(`cp "${candidate}" "${destBinary}"`)
           chmodSync(destBinary, 0o755)
+          logStep(steps, 'Built whisper-cli (Make) into your Syag models folder.')
           console.log('whisper-cli built and installed successfully')
           return destBinary
         }
@@ -238,16 +293,18 @@ async function tryBuildFromSource(): Promise<string | null> {
     }
 
     console.error('Build succeeded but binary not found')
-    return tryHomebrewInstall()
+    logStep(steps, 'Build did not produce whisper-cli. Trying Homebrew…')
+    return tryHomebrewInstall(steps)
   } catch (err: any) {
     console.error('Build from source failed:', err.message)
-    return tryHomebrewInstall()
+    logStep(steps, `Build from source failed (${err.message || 'error'}). Trying Homebrew…`)
+    return tryHomebrewInstall(steps)
   } finally {
     try { execSync(`rm -rf "${tmpDir}"`, { timeout: 10000 }) } catch {}
   }
 }
 
-function tryHomebrewInstall(): Promise<string | null> {
+function tryHomebrewInstall(steps?: string[]): Promise<string | null> {
   return new Promise((resolve) => {
     const brewPaths = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']
     let brewPath: string | null = null
@@ -257,10 +314,12 @@ function tryHomebrewInstall(): Promise<string | null> {
 
     if (!brewPath) {
       console.log('Homebrew not found')
+      logStep(steps, 'Homebrew not found at /opt/homebrew or /usr/local — install from https://brew.sh then retry.')
       resolve(null)
       return
     }
 
+    logStep(steps, 'Running brew install whisper-cpp (can take several minutes; keep Syag open)…')
     console.log('Installing whisper-cpp via Homebrew...')
     try {
       execSync(`"${brewPath}" install whisper-cpp`, {
@@ -270,13 +329,16 @@ function tryHomebrewInstall(): Promise<string | null> {
 
       const installed = findWhisperBinary()
       if (installed) {
+        logStep(steps, 'whisper-cpp installed via Homebrew.')
         console.log('whisper-cpp installed via Homebrew')
         resolve(installed)
       } else {
+        logStep(steps, 'brew finished but whisper-cli still not detected in PATH.')
         resolve(null)
       }
     } catch (err: any) {
       console.error('Homebrew install failed:', err.message)
+      logStep(steps, `Homebrew install failed: ${err.message || 'unknown error'}`)
       resolve(null)
     }
   })
@@ -359,12 +421,18 @@ function downloadFile(url: string, dest: string, redirectCount = 0): Promise<voi
   })
 }
 
-export async function processWithLocalSTT(wavBuffer: Buffer, modelId: string, customVocabulary?: string): Promise<STTResult> {
+export async function processWithLocalSTT(
+  wavBuffer: Buffer,
+  modelId: string,
+  customVocabulary?: string,
+  /** 0 = mic (You), 1 = system (Others); enables per-channel Whisper continuation instead of one shared context. */
+  stereoChannel?: 0 | 1
+): Promise<STTResult> {
   if (modelId === 'mlx-whisper-large-v3-turbo') {
-    return processWithMLXWhisper(wavBuffer, customVocabulary)
+    return processWithMLXWhisper(wavBuffer, customVocabulary, stereoChannel)
   }
   if (modelId === 'mlx-whisper-large-v3-turbo-8bit') {
-    return processWithMLXWhisper8Bit(wavBuffer, customVocabulary)
+    return processWithMLXWhisper8Bit(wavBuffer, customVocabulary, stereoChannel)
   }
   const modelPath = getModelPath(modelId)
   if (!modelPath) {
@@ -379,11 +447,7 @@ export async function processWithLocalSTT(wavBuffer: Buffer, modelId: string, cu
 
   try {
     writeFileSync(tmpFile, wavBuffer)
-    const result = await runWhisperCLI(binaryPath, modelPath, tmpFile, customVocabulary)
-
-    if (result.text.trim()) {
-      previousContext = result.text.trim().slice(-200)
-    }
+    const result = await runWhisperCLI(binaryPath, modelPath, tmpFile, customVocabulary, stereoChannel)
 
     return result
   } finally {
@@ -565,8 +629,38 @@ export async function checkMLXWhisperAvailable(): Promise<boolean> {
   return mlxWhisperAvailable
 }
 
-export async function installMLXWhisper(): Promise<boolean> {
-  await installFfmpeg()
+export async function installMLXWhisper(): Promise<LocalSetupResult> {
+  const steps: string[] = []
+  const hint =
+    'Needs Python 3, pip, and usually Homebrew for ffmpeg. In Terminal: brew install ffmpeg && pip3 install mlx-whisper'
+
+  steps.push('Step 1/3 — ffmpeg (converts audio for MLX)')
+  if (checkFfmpegAvailable()) {
+    steps.push('ffmpeg already available.')
+  } else {
+    if (require('os').platform() !== 'darwin') {
+      return {
+        ok: false,
+        steps,
+        error: 'ffmpeg not found; automatic install is only set up for macOS.',
+        hint: 'Install ffmpeg with your OS package manager, then: pip3 install mlx-whisper',
+      }
+    }
+    steps.push('ffmpeg not found — trying Homebrew install (requires Homebrew at /opt/homebrew or /usr/local)…')
+    const ffOk = await installFfmpeg()
+    if (!ffOk) {
+      return {
+        ok: false,
+        steps,
+        error: 'Could not install ffmpeg automatically.',
+        hint,
+      }
+    }
+    steps.push('ffmpeg installed.')
+  }
+
+  steps.push('Step 2/3 — Python package mlx-whisper (pip; may take several minutes)')
+  let mlxPipStderr = ''
   const pipOk = await new Promise<boolean>((resolve) => {
     const proc = spawn('python3', ['-m', 'pip', 'install', 'mlx-whisper'], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -578,27 +672,45 @@ export async function installMLXWhisper(): Promise<boolean> {
       if (code === 0) {
         resolve(true)
       } else {
+        mlxPipStderr = stderr.trim().slice(-600)
         console.warn('[MLX] pip install failed:', code, stderr.slice(-500))
         resolve(false)
       }
     })
     proc.on('error', (err) => {
       console.warn('[MLX] pip spawn error:', err.message)
+      steps.push(`pip could not run: ${err.message}`)
       resolve(false)
     })
   })
-  if (!pipOk) return false
-  // Verify the import actually works after install
+  if (!pipOk) {
+    if (mlxPipStderr) steps.push(`Last pip output: ${mlxPipStderr}`)
+    return {
+      ok: false,
+      steps,
+      error: 'pip install mlx-whisper failed (check that python3 and pip work in Terminal).',
+      hint,
+    }
+  }
+  steps.push('pip install finished.')
+
+  steps.push('Step 3/3 — Verifying import…')
   mlxWhisperAvailable = null
   const available = await checkMLXWhisperAvailable()
   if (!available) {
     console.warn('[MLX] pip install succeeded but import check failed')
-    return false
+    return {
+      ok: false,
+      steps,
+      error: 'mlx-whisper installed but Python import check failed (wrong Python / venv?).',
+      hint,
+    }
   }
-  return true
+  steps.push('MLX Whisper is ready.')
+  return { ok: true, steps }
 }
 
-async function processWithMLXWhisper(wavBuffer: Buffer, customVocabulary?: string): Promise<STTResult> {
+async function processWithMLXWhisper(wavBuffer: Buffer, customVocabulary?: string, stereoChannel?: 0 | 1): Promise<STTResult> {
   const available = await checkMLXWhisperAvailable()
   if (!available) {
     throw new Error('mlx-whisper is not installed. Install it from Settings > AI Models or run: pip3 install mlx-whisper')
@@ -613,8 +725,10 @@ async function processWithMLXWhisper(wavBuffer: Buffer, customVocabulary?: strin
   try {
     writeFileSync(tmpFile, wavBuffer)
 
+    const ch = stereoChannel ?? 0
     const promptParts: string[] = []
-    if (previousContext) promptParts.push(previousContext)
+    const prev = previousContextByChannel[ch]
+    if (prev) promptParts.push(prev)
     if (customVocabulary) {
       promptParts.push(customVocabulary.split('\n').map(t => t.trim()).filter(Boolean).join(', '))
     }
@@ -828,8 +942,33 @@ export async function checkMLXWhisper8BitAvailable(): Promise<boolean> {
   return mlx8BitAvailable
 }
 
-export async function installMLXWhisper8Bit(): Promise<boolean> {
-  await installFfmpeg()
+export async function installMLXWhisper8Bit(): Promise<LocalSetupResult> {
+  const steps: string[] = []
+  const hint =
+    'Needs Python 3, pip, ffmpeg. In Terminal: brew install ffmpeg && pip3 install mlx-audio-plus'
+
+  steps.push('Step 1/3 — ffmpeg')
+  if (checkFfmpegAvailable()) {
+    steps.push('ffmpeg already available.')
+  } else {
+    if (require('os').platform() !== 'darwin') {
+      return {
+        ok: false,
+        steps,
+        error: 'ffmpeg not found; automatic install is only set up for macOS.',
+        hint,
+      }
+    }
+    steps.push('ffmpeg not found — trying Homebrew…')
+    const ffOk = await installFfmpeg()
+    if (!ffOk) {
+      return { ok: false, steps, error: 'Could not install ffmpeg automatically.', hint }
+    }
+    steps.push('ffmpeg installed.')
+  }
+
+  steps.push('Step 2/3 — Python package mlx-audio-plus (pip; may take several minutes)')
+  let mlx8PipStderr = ''
   const pipOk = await new Promise<boolean>((resolve) => {
     const proc = spawn('python3', ['-m', 'pip', 'install', 'mlx-audio-plus'], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -841,24 +980,44 @@ export async function installMLXWhisper8Bit(): Promise<boolean> {
       if (code === 0) {
         resolve(true)
       } else {
+        mlx8PipStderr = stderr.trim().slice(-600)
         console.warn('[MLX 8-bit] pip install failed:', code, stderr.slice(-500))
         resolve(false)
       }
     })
-    proc.on('error', () => resolve(false))
+    proc.on('error', (err) => {
+      steps.push(`pip could not run: ${err.message}`)
+      resolve(false)
+    })
   })
-  if (!pipOk) return false
-  // Verify the import actually works after install
+  if (!pipOk) {
+    if (mlx8PipStderr) steps.push(`Last pip output: ${mlx8PipStderr}`)
+    return {
+      ok: false,
+      steps,
+      error: 'pip install mlx-audio-plus failed.',
+      hint,
+    }
+  }
+  steps.push('pip install finished.')
+
+  steps.push('Step 3/3 — Verifying import…')
   mlx8BitAvailable = null
   const available = await checkMLXWhisper8BitAvailable()
   if (!available) {
     console.warn('[MLX 8-bit] pip install succeeded but import check failed')
-    return false
+    return {
+      ok: false,
+      steps,
+      error: 'mlx-audio-plus installed but import check failed.',
+      hint,
+    }
   }
-  return true
+  steps.push('MLX Whisper 8-bit is ready.')
+  return { ok: true, steps }
 }
 
-async function processWithMLXWhisper8Bit(wavBuffer: Buffer, customVocabulary?: string): Promise<STTResult> {
+async function processWithMLXWhisper8Bit(wavBuffer: Buffer, customVocabulary?: string, stereoChannel?: 0 | 1): Promise<STTResult> {
   const available = await checkMLXWhisper8BitAvailable()
   if (!available) {
     throw new Error('mlx-audio-plus or ffmpeg not available. Install from Settings > AI Models (Download) or run: brew install ffmpeg && pip3 install mlx-audio-plus')
@@ -869,7 +1028,12 @@ async function processWithMLXWhisper8Bit(wavBuffer: Buffer, customVocabulary?: s
   const tmpFile = join(tmpDir, `mlx8-chunk-${Date.now()}.wav`)
   try {
     writeFileSync(tmpFile, wavBuffer)
-    const request = JSON.stringify({ audio_path: tmpFile }) + '\n'
+    const ch = stereoChannel ?? 0
+    const promptParts: string[] = []
+    if (previousContextByChannel[ch]) promptParts.push(previousContextByChannel[ch])
+    if (customVocabulary?.trim()) promptParts.push(customVocabulary.trim())
+    const mlx8Prompt = promptParts.join(' ').slice(-500)
+    const request = JSON.stringify({ audio_path: tmpFile, prompt: mlx8Prompt || undefined }) + '\n'
     const result = await new Promise<STTResult>((resolve, reject) => {
       if (!mlx8BitWorker?.stdin || !mlx8BitWorker?.stdout) {
         reject(new Error('MLX 8-bit worker not available'))
@@ -1043,7 +1207,13 @@ export function setSTTThreadCount(n: number): void {
   sttThreadCount = Math.max(1, Math.min(n, require('os').cpus().length))
 }
 
-function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string, customVocabulary?: string): Promise<STTResult> {
+function runWhisperCLI(
+  binaryPath: string,
+  modelPath: string,
+  audioPath: string,
+  customVocabulary?: string,
+  stereoChannel?: 0 | 1
+): Promise<STTResult> {
   return new Promise((resolve, reject) => {
     const args = [
       '-m', modelPath,
@@ -1060,9 +1230,10 @@ function runWhisperCLI(binaryPath: string, modelPath: string, audioPath: string,
       '--print-special', 'false',
     ]
 
-    // Build prompt: previous context + custom vocabulary for continuity
+    // Build prompt: same-channel previous text + custom vocabulary (avoids You/Others context fighting).
+    const ch = stereoChannel ?? 0
     const promptParts: string[] = []
-    if (previousContext) promptParts.push(previousContext)
+    if (previousContextByChannel[ch]) promptParts.push(previousContextByChannel[ch])
     if (customVocabulary?.trim()) promptParts.push(customVocabulary.trim())
     const fullPrompt = promptParts.join(' ').slice(-500)
     if (fullPrompt) {

@@ -1,12 +1,24 @@
 import { ipcMain, systemPreferences, desktopCapturer, app, safeStorage, BrowserWindow } from 'electron'
-import { updateTrayRecordingState, updateTrayMeetingInfo } from './tray'
+import { updateTrayRecordingState, updateTrayMeetingInfo, rebuildTrayContextMenu } from './tray'
 import { setCalendarEvents } from './meeting-detector'
 import {
   getAllNotes, getNote, addNote, updateNote, deleteNote, updateNoteFolder,
   getAllFolders, addFolder, updateFolder, deleteFolder,
   getSetting, setSetting, getAllSettings,
+  getAllLocalCalendarBlocks, addLocalCalendarBlock, deleteLocalCalendarBlock,
 } from './storage/database'
+import {
+  setTrayAgendaCache,
+  getTrayAgendaCache,
+  showMainWindowCalendar,
+  showMainWindowSettings,
+  showMainWindowApp,
+  startNewNoteFromTrayAgenda,
+  quitFromTrayAgenda,
+  openNoteOrNewMeetingFromTray,
+} from './tray-agenda-window'
 import { downloadModel, cancelDownload, deleteModel, listDownloadedModels } from './models/manager'
+import type { LocalSetupResult } from './models/stt-engine'
 import { netFetch } from './cloud/net-request'
 import { startRecording, stopRecording, pauseRecording, resumeRecording, processAudioChunk } from './audio/capture'
 import { summarize } from './models/llm-engine'
@@ -57,7 +69,11 @@ export function registerIPCHandlers(): void {
 
   // --- Settings ---
   ipcMain.handle('db:settings-get', (_e, key: string) => getSetting(key))
-  ipcMain.handle('db:settings-set', (_e, key: string, value: string) => { setSetting(key, value); return true })
+  ipcMain.handle('db:settings-set', (_e, key: string, value: string) => {
+    setSetting(key, value)
+    if (key === 'tray-calendar-agenda') rebuildTrayContextMenu()
+    return true
+  })
   ipcMain.handle('db:settings-get-all', () => getAllSettings())
 
   // --- Models ---
@@ -68,13 +84,12 @@ export function registerIPCHandlers(): void {
       await downloadModel(modelId, (progress) => {
         sender.send('models:download-progress', progress)
       })
-      sender.send('models:download-complete', { modelId, success: true })
-      // Auto-setup: after downloading a whisper.cpp model, ensure CLI binary is ready in background
+      let whisperCli: LocalSetupResult | undefined
       if (WHISPER_CPP_MODEL_IDS.includes(modelId)) {
-        import('./models/stt-engine').then(({ ensureWhisperBinaryInBackground }) => {
-          ensureWhisperBinaryInBackground()
-        }).catch(() => {})
+        const { ensureWhisperCliSetupResult } = await import('./models/stt-engine')
+        whisperCli = await ensureWhisperCliSetupResult()
       }
+      sender.send('models:download-complete', { modelId, success: true, whisperCli })
       return true
     } catch (err: any) {
       sender.send('models:download-complete', { modelId, success: false, error: err.message })
@@ -456,10 +471,10 @@ export function registerIPCHandlers(): void {
       return { ok: false, error: err.message }
     }
   })
-  ipcMain.handle('google:calendar-fetch', async (_e, accessToken: string) => {
+  ipcMain.handle('google:calendar-fetch', async (_e, accessToken: string, range?: { daysPast?: number; daysAhead?: number }) => {
     try {
       const { fetchGoogleCalendarEvents } = await import('./integrations/google-calendar')
-      return fetchGoogleCalendarEvents(accessToken)
+      return fetchGoogleCalendarEvents(accessToken, 'primary', range ?? { daysPast: 30, daysAhead: 30 })
     } catch (err: any) {
       return { ok: false, events: [], error: err.message }
     }
@@ -482,10 +497,11 @@ export function registerIPCHandlers(): void {
       return { ok: false, error: err.message }
     }
   })
-  ipcMain.handle('microsoft:calendar-fetch', async (_e, accessToken: string) => {
+  ipcMain.handle('microsoft:calendar-fetch', async (_e, accessToken: string, range?: { daysPast?: number; daysAhead?: number }) => {
     try {
       const { fetchMicrosoftCalendarEvents } = await import('./integrations/microsoft-calendar')
-      return fetchMicrosoftCalendarEvents(accessToken)
+      const events = await fetchMicrosoftCalendarEvents(accessToken, range ?? { daysPast: 30, daysAhead: 30 })
+      return { ok: true, events }
     } catch (err: any) {
       return { ok: false, events: [], error: err.message }
     }
@@ -498,6 +514,49 @@ export function registerIPCHandlers(): void {
       return { ok: false, error: err.message }
     }
   })
+
+  ipcMain.handle('calendar-local-blocks:list', () => getAllLocalCalendarBlocks())
+  ipcMain.handle('calendar-local-blocks:add', (_e, block: { id: string; title: string; startIso: string; endIso: string; noteId?: string | null }) => {
+    addLocalCalendarBlock(block)
+    return true
+  })
+  ipcMain.handle('calendar-local-blocks:delete', (_e, id: string) => {
+    deleteLocalCalendarBlock(id)
+    return true
+  })
+
+  ipcMain.handle('tray-agenda:set-cache', (_e, events: unknown) => {
+    setTrayAgendaCache(Array.isArray(events) ? (events as any) : [])
+    return true
+  })
+  ipcMain.handle('tray-agenda:get-cache', () => getTrayAgendaCache())
+  ipcMain.handle('tray-agenda:show-main', () => {
+    showMainWindowCalendar()
+    return true
+  })
+  ipcMain.handle('tray-agenda:show-settings', () => {
+    showMainWindowSettings()
+    return true
+  })
+  ipcMain.handle('tray-agenda:go-to-app', () => {
+    showMainWindowApp()
+    return true
+  })
+  ipcMain.handle('tray-agenda:new-note', () => {
+    startNewNoteFromTrayAgenda()
+    return true
+  })
+  ipcMain.handle('tray-agenda:quit', () => {
+    quitFromTrayAgenda()
+    return true
+  })
+  ipcMain.handle(
+    'tray-agenda:activate-event',
+    (_e, payload: { noteId?: string | null; eventId?: string; title?: string; openMode: 'note' | 'calendar' }) => {
+      openNoteOrNewMeetingFromTray(payload)
+      return true
+    }
+  )
 
   // --- Jira ---
   ipcMain.handle('jira:test-token', async (_e, siteUrl: string, email: string, apiToken: string) => {
@@ -661,6 +720,14 @@ export function registerIPCHandlers(): void {
   ipcMain.handle('coaching:generate-role-insights', async (_e, metrics: any, roleId: string, model?: string) => {
     const { generateRoleCoachingInsights } = await import('./models/coaching-feedback')
     return generateRoleCoachingInsights(metrics, roleId, model)
+  })
+  ipcMain.handle('coaching:analyze-conversation', async (_e, payload: any) => {
+    const { analyzeConversationQuality } = await import('./models/conversation-coaching')
+    return analyzeConversationQuality(payload)
+  })
+  ipcMain.handle('coaching:aggregate-insights', async (_e, meetings: any[], roleId: string, model?: string) => {
+    const { aggregateCrossMeetingInsights } = await import('./models/conversation-coaching')
+    return aggregateCrossMeetingInsights(meetings, roleId, model)
   })
 
   // --- Knowledge Base ---

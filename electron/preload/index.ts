@@ -47,7 +47,14 @@ const electronAPI = {
       ipcRenderer.on('models:download-progress', handler)
       return () => ipcRenderer.removeListener('models:download-progress', handler)
     },
-    onDownloadComplete: (callback: (data: { modelId: string; success: boolean; error?: string }) => void) => {
+    onDownloadComplete: (
+      callback: (data: {
+        modelId: string
+        success: boolean
+        error?: string
+        whisperCli?: { ok: boolean; steps: string[]; error?: string; hint?: string }
+      }) => void
+    ) => {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on('models:download-complete', handler)
       return () => ipcRenderer.removeListener('models:download-complete', handler)
@@ -166,6 +173,23 @@ const electronAPI = {
       ipcRenderer.on('tray:navigate-to-meeting', callback)
       return () => ipcRenderer.removeListener('tray:navigate-to-meeting', callback)
     },
+    onTrayAgendaNavigate: (callback: (data: { path: string; search?: string }) => void) => {
+      const handler = (_event: unknown, data: { path: string; search?: string }) => callback(data)
+      ipcRenderer.on('tray-agenda:navigate', handler)
+      return () => ipcRenderer.removeListener('tray-agenda:navigate', handler)
+    },
+    onTrayAgendaOpenEvent: (
+      callback: (payload: {
+        noteId?: string | null
+        eventId?: string
+        title?: string
+        openMode: 'note' | 'calendar'
+      }) => void
+    ) => {
+      const handler = (_event: unknown, data: any) => callback(data)
+      ipcRenderer.on('tray-agenda:open-event', handler)
+      return () => ipcRenderer.removeListener('tray-agenda:open-event', handler)
+    },
     onTrayPauseRecording: (callback: () => void) => {
       ipcRenderer.on('tray:pause-recording', callback)
       return () => ipcRenderer.removeListener('tray:pause-recording', callback)
@@ -201,11 +225,39 @@ const electronAPI = {
       ipcRenderer.invoke('teams:send-summary', webhookUrl, payload) as Promise<{ ok: boolean; error?: string }>,
   },
 
+  calendarLocalBlocks: {
+    list: () => ipcRenderer.invoke('calendar-local-blocks:list'),
+    add: (block: { id: string; title: string; startIso: string; endIso: string; noteId?: string | null }) =>
+      ipcRenderer.invoke('calendar-local-blocks:add', block),
+    delete: (id: string) => ipcRenderer.invoke('calendar-local-blocks:delete', id),
+  },
+
+  trayAgenda: {
+    setCache: (events: unknown) => ipcRenderer.invoke('tray-agenda:set-cache', events),
+    getCache: () => ipcRenderer.invoke('tray-agenda:get-cache'),
+    showMain: () => ipcRenderer.invoke('tray-agenda:show-main'),
+    showSettings: () => ipcRenderer.invoke('tray-agenda:show-settings'),
+    goToApp: () => ipcRenderer.invoke('tray-agenda:go-to-app'),
+    newNote: () => ipcRenderer.invoke('tray-agenda:new-note'),
+    quit: () => ipcRenderer.invoke('tray-agenda:quit'),
+    activateEvent: (payload: {
+      noteId?: string | null
+      eventId?: string
+      title?: string
+      openMode: 'note' | 'calendar'
+    }) => ipcRenderer.invoke('tray-agenda:activate-event', payload),
+    onCacheUpdated: (callback: () => void) => {
+      const handler = () => callback()
+      ipcRenderer.on('tray-agenda:cache-updated', handler)
+      return () => ipcRenderer.removeListener('tray-agenda:cache-updated', handler)
+    },
+  },
+
   google: {
     calendarAuth: (clientId: string) =>
       ipcRenderer.invoke('google:calendar-auth', clientId) as Promise<{ ok: boolean; accessToken?: string; refreshToken?: string; expiresIn?: number; email?: string; error?: string }>,
-    calendarFetch: (accessToken: string) =>
-      ipcRenderer.invoke('google:calendar-fetch', accessToken) as Promise<{ ok: boolean; events: any[]; error?: string }>,
+    calendarFetch: (accessToken: string, range?: { daysPast?: number; daysAhead?: number }) =>
+      ipcRenderer.invoke('google:calendar-fetch', accessToken, range) as Promise<{ ok: boolean; events: any[]; error?: string }>,
     calendarRefresh: (clientId: string, refreshToken: string) =>
       ipcRenderer.invoke('google:calendar-refresh', clientId, refreshToken) as Promise<{ ok: boolean; accessToken?: string; expiresIn?: number; error?: string }>,
   },
@@ -213,8 +265,8 @@ const electronAPI = {
   microsoft: {
     calendarAuth: (clientId: string) =>
       ipcRenderer.invoke('microsoft:calendar-auth', clientId) as Promise<{ ok: boolean; accessToken?: string; refreshToken?: string; expiresIn?: number; email?: string; error?: string }>,
-    calendarFetch: (accessToken: string) =>
-      ipcRenderer.invoke('microsoft:calendar-fetch', accessToken) as Promise<{ ok: boolean; events: any[]; error?: string }>,
+    calendarFetch: (accessToken: string, range?: { daysPast?: number; daysAhead?: number }) =>
+      ipcRenderer.invoke('microsoft:calendar-fetch', accessToken, range) as Promise<{ ok: boolean; events: any[]; error?: string }>,
     calendarRefresh: (clientId: string, refreshToken: string) =>
       ipcRenderer.invoke('microsoft:calendar-refresh', clientId, refreshToken) as Promise<{ ok: boolean; accessToken?: string; expiresIn?: number; error?: string }>,
   },
@@ -261,6 +313,34 @@ const electronAPI = {
   coaching: {
     generateRoleInsights: (metrics: any, roleId: string, model?: string) =>
       ipcRenderer.invoke('coaching:generate-role-insights', metrics, roleId, model) as Promise<{ roleInsights: string[]; roleId: string }>,
+    analyzeConversation: (payload: any) =>
+      ipcRenderer.invoke('coaching:analyze-conversation', payload) as Promise<{
+        headline: string
+        narrative: string
+        microInsights: { text: string; framework?: string; evidenceQuote?: string; speaker?: string; time?: string }[]
+        habitTags: string[]
+        keyMoments: { title: string; quote: string; speaker: string; time: string }[]
+        generatedAt: string
+        model?: string
+      } | null>,
+    aggregateInsights: (
+      meetings: {
+        title: string
+        date: string
+        headline: string
+        narrative: string
+        habitTags: string[]
+        overallScore?: number
+      }[],
+      roleId: string,
+      model?: string
+    ) =>
+      ipcRenderer.invoke('coaching:aggregate-insights', meetings, roleId, model) as Promise<{
+        summaryHeadline: string
+        themesParagraph: string
+        focusNext: string
+        recurringTags: string[]
+      } | null>,
   },
 
   kb: {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  Users, Building2, Tag, X, Plus, Check, UserPlus,
+  Users, Tag, X, Plus, Check, UserPlus,
 } from "lucide-react";
 import { getElectronAPI } from "@/lib/electron-api";
 
@@ -97,7 +97,7 @@ export function MeetingMetadata({ noteId }: MeetingMetadataProps) {
   };
 
   const handleAddTopic = async () => {
-    if (!api?.memory || !newTopicLabel.trim()) return;
+    if (!api?.memory || !newTopicLabel.trim() || topics.length >= 2) return;
     await api.memory.topics.addToNote(noteId, newTopicLabel.trim());
     setNewTopicLabel("");
     setAddingTopic(false);
@@ -138,12 +138,6 @@ export function MeetingMetadata({ noteId }: MeetingMetadataProps) {
   }, [addingTopic]);
 
   if (!api?.memory) return null;
-
-  // Derive company from the most common company among attendees
-  const companies = people.map(p => p.company).filter(Boolean) as string[];
-  const companyCount = new Map<string, number>();
-  companies.forEach(c => companyCount.set(c, (companyCount.get(c) || 0) + 1));
-  const topCompany = [...companyCount.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
   return (
     <div className="flex flex-col gap-2 mb-4">
@@ -205,14 +199,6 @@ export function MeetingMetadata({ noteId }: MeetingMetadataProps) {
           </div>
         </div>
 
-      {/* Company (derived) */}
-      {topCompany && (
-        <div className="flex items-center gap-2">
-          <Building2 className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
-          <span className="text-[12px] text-foreground/70">{topCompany}</span>
-        </div>
-      )}
-
       {/* Tags */}
       <div className="flex items-start gap-2 flex-wrap">
           <Tag className="h-3.5 w-3.5 text-muted-foreground/50 mt-1.5 flex-shrink-0" />
@@ -228,7 +214,7 @@ export function MeetingMetadata({ noteId }: MeetingMetadataProps) {
                 onCancel={() => setEditingTopic(null)}
               />
             ))}
-            {addingTopic ? (
+            {topics.length < 2 && (addingTopic ? (
               <input
                 ref={addTopicRef}
                 value={newTopicLabel}
@@ -248,7 +234,7 @@ export function MeetingMetadata({ noteId }: MeetingMetadataProps) {
               >
                 <Plus className="h-2.5 w-2.5" />
               </button>
-            )}
+            ))}
           </div>
         </div>
     </div>
@@ -342,9 +328,6 @@ function PersonChip({
       >
         {person.name}
       </span>
-      {person.company && (
-        <span className="text-muted-foreground/60 hidden group-hover/person:inline">· {person.company}</span>
-      )}
       <button
         onClick={onRemove}
         className="opacity-0 group-hover/person:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
@@ -381,18 +364,32 @@ function TopicChip({
 
   if (isEditing) {
     return (
-      <div className="flex items-center gap-0.5 rounded-full border border-ring bg-background px-2 py-0.5">
+      <div className="flex items-center gap-1 rounded-full border border-ring bg-background px-2 py-0.5">
         <input
           ref={inputRef}
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") onUpdate(label);
+            if (e.key === "Enter") onUpdate(label.trim() || topic.label);
             if (e.key === "Escape") onCancel();
           }}
-          onBlur={() => { if (label.trim()) onUpdate(label); else onCancel(); }}
+          onBlur={() => { if (label.trim()) onUpdate(label.trim()); else onCancel(); }}
           className="h-5 w-24 bg-transparent text-[11px] text-foreground outline-none"
         />
+        <button
+          onClick={() => onUpdate(label.trim() || topic.label)}
+          className="p-0.5 rounded hover:bg-secondary text-accent"
+          title="Save"
+        >
+          <Check className="h-3 w-3" />
+        </button>
+        <button
+          onClick={onCancel}
+          className="p-0.5 rounded hover:bg-secondary text-muted-foreground"
+          title="Cancel"
+        >
+          <X className="h-3 w-3" />
+        </button>
       </div>
     );
   }

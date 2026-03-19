@@ -1,4 +1,10 @@
-import { processWithLocalSTT, resetContext, type STTResult } from '../models/stt-engine'
+import {
+  processWithLocalSTT,
+  resetContext,
+  setPreviousContextForChannel,
+  getPreviousContextForChannel,
+  type STTResult,
+} from '../models/stt-engine'
 import { routeSTT, routeLLM } from '../cloud/router'
 import { sttSystemDarwin } from './stt-system-darwin'
 import { runVAD, ensureVADModel } from './vad'
@@ -59,13 +65,30 @@ const CHUNK_INTERVAL_IDLE_MS = 15000
 const SAMPLE_RATE = 16000
 // Auto-pause on silence disabled — user manually pauses and uses "Generate summary" button
 const MIN_SAMPLES_PER_CHANNEL = 16000 * 2 // 2s minimum for STT (more context = fewer word errors)
-const EARLY_TRIGGER_SAMPLES = 16000 * 4  // 4s: early-trigger threshold for low-latency first result
+const EARLY_TRIGGER_SAMPLES = 16000 * 5  // 5s: slightly longer buffers reduce cut-off mid-sentence vs 4s
 // Diarization is channel-based: channel 0 = mic (You), channel 1 = system audio (Others).
 // When you're muted, mic may still send silence/comfort noise; we use stricter gates for "You" to avoid false labels.
 const SPEAKER_BY_CHANNEL = ['You', 'Others'] as const
 const MIN_ENERGY_BY_CHANNEL = [0.0004, 0.0001] as const   // You: stricter so muted mic doesn't produce segments
 const MIN_SPEECH_ENERGY_BY_CHANNEL = [0.0012, 0.0004] as const
-const MIN_SPEECH_DURATION_SEC_BY_CHANNEL = [0.8, 0.5] as const  // You: require clearer/longer speech
+// You: slightly relaxed so short phrases right after un-muting in the meeting app are less likely to be skipped
+const MIN_SPEECH_DURATION_SEC_BY_CHANNEL = [0.55, 0.5] as const
+
+/** Log mic-channel skip reasons when SYAG_DEBUG_AUDIO=1 or setting debug-audio-capture=true (see docs/transcript-me-them.md). */
+function isDebugAudioCapture(): boolean {
+  try {
+    const e = process.env.SYAG_DEBUG_AUDIO
+    if (e === '1' || e === 'true') return true
+  } catch {
+    /* no process.env in some test contexts */
+  }
+  return getSetting('debug-audio-capture') === 'true'
+}
+
+function logMicCaptureDebug(reason: string, detail: Record<string, string | number | boolean | undefined> = {}) {
+  if (!isDebugAudioCapture()) return
+  console.log('[capture-debug] mic(ch0)', reason, detail)
+}
 
 export let currentChunkIntervalMs = CHUNK_INTERVAL_ACTIVE_MS
 
@@ -313,6 +336,7 @@ async function processBufferedAudio(): Promise<void> {
       // Backoff: skip processing if local STT is in cooldown after repeated failures
       if (currentSTTModel.startsWith('local:') && Date.now() < localSTTBackoffUntil) {
         console.log('[capture] Skipping local STT (backoff until', new Date(localSTTBackoffUntil).toISOString(), ')')
+        if (channel === 0) logMicCaptureDebug('skip_local_stt_backoff', { until: localSTTBackoffUntil })
         isProcessing = false
         statusCallback?.({ state: 'stt-idle' })
         continue
@@ -323,6 +347,7 @@ async function processBufferedAudio(): Promise<void> {
       if (energy < minEnergy) {
         if (currentSTTModel.startsWith('local:')) console.log('[capture] Skip (buffer energy', energy.toFixed(6), '<', minEnergy, ') channel:', channel)
         audioBuffers[channel].splice(0, chunkCount)
+        if (channel === 0) logMicCaptureDebug('skip_buffer_energy', { energy: energy, minEnergy, samples: merged.length })
         consecutiveSilentChunks++
         if (consecutiveSilentChunks >= 2 && currentChunkIntervalMs < CHUNK_INTERVAL_IDLE_MS) {
           currentChunkIntervalMs = CHUNK_INTERVAL_IDLE_MS
@@ -355,6 +380,7 @@ async function processBufferedAudio(): Promise<void> {
           hasSpeech = false
           if (currentSTTModel.startsWith('local:')) console.log('[capture] Skip (VAD: no segments) channel:', channel)
           audioBuffers[channel].splice(0, chunkCount)
+          if (channel === 0) logMicCaptureDebug('skip_vad_no_segments', { vadThreshold, ambientEnergy })
           isProcessing = false
           statusCallback?.({ state: 'stt-idle' })
           continue
@@ -364,6 +390,7 @@ async function processBufferedAudio(): Promise<void> {
         if (totalSpeechDuration < minSpeechSec) {
           if (currentSTTModel.startsWith('local:')) console.log('[capture] Skip (VAD: speech duration', totalSpeechDuration.toFixed(1), '<', minSpeechSec, 's) channel:', channel)
           audioBuffers[channel].splice(0, chunkCount)
+          if (channel === 0) logMicCaptureDebug('skip_vad_short_duration', { totalSpeechDuration, minSpeechSec })
           isProcessing = false
           statusCallback?.({ state: 'stt-idle' })
           continue
@@ -379,6 +406,7 @@ async function processBufferedAudio(): Promise<void> {
       if (speechEnergy < minSpeechEnergy) {
         if (currentSTTModel.startsWith('local:')) console.log('[capture] Skip (speech energy', speechEnergy.toFixed(6), '<', minSpeechEnergy, ') channel:', channel)
         audioBuffers[channel].splice(0, chunkCount)
+        if (channel === 0) logMicCaptureDebug('skip_speech_energy', { speechEnergy, minSpeechEnergy })
         isProcessing = false
         statusCallback?.({ state: 'stt-idle' })
         continue
@@ -397,14 +425,24 @@ async function processBufferedAudio(): Promise<void> {
       let sttResult: STTResult
       if (currentSTTModel.startsWith('local:')) {
         console.log('[capture] Running local STT:', currentSTTModel, 'channel:', channel, 'samples:', speechAudio.length)
-        sttResult = await processWithLocalSTT(wavBuffer, currentSTTModel.replace('local:', ''), customVocabulary)
+        sttResult = await processWithLocalSTT(
+          wavBuffer,
+          currentSTTModel.replace('local:', ''),
+          customVocabulary,
+          channel as 0 | 1
+        )
       } else if (currentSTTModel.startsWith('system:')) {
         const text = await sttSystemDarwin(wavBuffer)
         sttResult = { text, words: [] }
       } else {
         // vocabulary: for Deepgram keywords; prompt: for Groq/OpenAI Whisper
         const vocab = sttVocabularyTerms.length > 0 ? sttVocabularyTerms : undefined
-        const prompt = customVocabulary || undefined
+        const prevSame = getPreviousContextForChannel(channel as 0 | 1)
+        const prompt =
+          [customVocabulary, prevSame ? `Same speaker may continue: ${prevSame}` : '']
+            .filter(Boolean)
+            .join(' ')
+            .slice(0, 800) || undefined
         // Timeout prevents a hung API call from blocking the entire pipeline
         const text = await Promise.race([
           routeSTT(wavBuffer, currentSTTModel, vocab, prompt),
@@ -433,6 +471,7 @@ async function processBufferedAudio(): Promise<void> {
       if (sttResult.avgConfidence != null && sttResult.avgConfidence < -3.0) {
         audioBuffers[channel].splice(0, chunkCount)
         chunkRetryCount[channel] = 0
+        if (channel === 0) logMicCaptureDebug('skip_low_confidence', { avgConfidence: sttResult.avgConfidence })
         isProcessing = false
         statusCallback?.({ state: 'stt-idle' })
         continue
@@ -456,6 +495,7 @@ async function processBufferedAudio(): Promise<void> {
         if (isDuplicate) {
           audioBuffers[channel].splice(0, chunkCount)
           chunkRetryCount[channel] = 0
+          if (channel === 0) logMicCaptureDebug('skip_cross_channel_dedup', { preview: filteredNorm.slice(0, 80) })
           isProcessing = false
           statusCallback?.({ state: 'stt-idle' })
           continue
@@ -465,6 +505,7 @@ async function processBufferedAudio(): Promise<void> {
         lastSpeechTime = Date.now()
         const time = formatTimestamp(chunkStartSec)
         transcriptCallback({ speaker, time, text: filtered, words: sttResult.words?.length ? sttResult.words : undefined })
+        setPreviousContextForChannel(channel as 0 | 1, filtered)
         // Success — remove processed audio from buffer and reset retry counter
         audioBuffers[channel].splice(0, chunkCount)
         chunkRetryCount[channel] = 0

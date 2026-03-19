@@ -183,6 +183,8 @@ Start capture → audio → STT → transcript chunks → UI and save.
 - [electron/main/ipc-handlers.ts](../electron/main/ipc-handlers.ts) (lines 146–154)
 - [electron/preload/index.ts](../electron/preload/index.ts) (recording:transcript-chunk)
 
+**Me vs Them:** Speaker labels follow **microphone vs system audio**, not names spoken in the meeting. See [transcript-me-them.md](transcript-me-them.md) for behavior and optional mic-channel debug logging.
+
 ---
 
 ## Future: E2E automation

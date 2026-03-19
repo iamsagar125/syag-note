@@ -8,7 +8,7 @@ import { NotesViewToggle } from "@/components/NotesViewToggle";
 import { useNotes, type SavedNote } from "@/contexts/NotesContext";
 import { useRecording } from "@/contexts/RecordingContext";
 import { useModelSettings } from "@/contexts/ModelSettingsContext";
-import { Share2, MoreHorizontal, FileText, Hash, Calendar, Clock, EyeOff, Eye, Search, X, Check, ChevronDown, Loader2, Copy, Download, FileDown, BarChart3, BookOpen, MessageSquare, Sparkles } from "lucide-react";
+import { Share2, MoreHorizontal, FileText, Hash, Calendar, Clock, EyeOff, Eye, Search, X, Check, ChevronDown, Loader2, Copy, Download, FileDown, BarChart3, BookOpen, MessageSquare, Sparkles, Quote, Crosshair } from "lucide-react";
 import { MeetingMetadata } from "@/components/MeetingMetadata";
 import { useElapsedTime } from "@/hooks/useElapsedTime";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { noteToMarkdown } from "@/lib/export-markdown";
 import { CoachingCard } from "@/components/CoachingCard";
 import { computeCoachingMetrics } from "@/lib/coaching-analytics";
+import { computeConversationHeuristics, findTranscriptLineIndexForQuote } from "@/lib/conversation-heuristics";
 import { SlackShareDialog } from "@/components/SlackShareDialog";
 import { TeamsShareDialog } from "@/components/TeamsShareDialog";
 import {
@@ -446,7 +447,19 @@ export default function NoteDetailPage() {
                     )}
                   </>
                 ) : viewMode === "coaching" ? (
-                  <CoachingView note={note} updateNote={updateNote} />
+                  <CoachingView
+                    note={note}
+                    updateNote={updateNote}
+                    onJumpToTranscriptLine={(lineIndex) => {
+                      setTranscriptVisible(true);
+                      setTranscriptSearch("");
+                      window.requestAnimationFrame(() => {
+                        document
+                          .getElementById(`syag-transcript-line-${lineIndex}`)
+                          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      });
+                    }}
+                  />
                 ) : (
                   <div>
                     <div className="flex items-center gap-2 mb-2">
@@ -526,13 +539,18 @@ export default function NoteDetailPage() {
                   const groups = groupTranscriptBySpeaker(filtered.map(({ line, originalIndex }) => ({ ...line, originalIndex })));
                   const searchRegex = transcriptSearch ? new RegExp(`(${transcriptSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi") : null;
                   const totalSaved = note.transcript.length;
-                  return groups.map((group, groupIdx) => {
+                    return groups.map((group, groupIdx) => {
                     const displayLabel = group.speaker === "You" ? "Me" : "Them";
                     const isNew = group.indices.some((i) => i >= totalSaved);
                     const prevGroup = groupIdx > 0 ? groups[groupIdx - 1] : null;
                     const showLabel = !prevGroup || prevGroup.speaker !== group.speaker;
+                    const anchorIndex = group.indices[0];
                     return (
-                      <div key={group.indices.join("-")} className={isNew ? "animate-fade-in" : ""}>
+                      <div
+                        key={group.indices.join("-")}
+                        id={anchorIndex !== undefined ? `syag-transcript-line-${anchorIndex}` : undefined}
+                        className={isNew ? "animate-fade-in scroll-mt-4" : "scroll-mt-4"}
+                      >
                         {showLabel ? (
                           <div className="flex items-center gap-1.5 mb-0.5">
                             <div className="flex h-4 w-4 items-center justify-center rounded-full bg-secondary text-[8px] font-medium text-foreground">
@@ -600,7 +618,15 @@ export default function NoteDetailPage() {
 
 // ── Coaching View (computed on demand) ───────────────────────────────
 
-function CoachingView({ note, updateNote }: { note: SavedNote; updateNote: (id: string, updates: Partial<SavedNote>) => void }) {
+function CoachingView({
+  note,
+  updateNote,
+  onJumpToTranscriptLine,
+}: {
+  note: SavedNote;
+  updateNote: (id: string, updates: Partial<SavedNote>) => void;
+  onJumpToTranscriptLine?: (lineIndex: number) => void;
+}) {
   const api = getElectronAPI();
   const meetingDurationSec = useMemo(() => {
     const parts = (note.duration || "0:00").split(":").map(Number);
@@ -608,6 +634,14 @@ function CoachingView({ note, updateNote }: { note: SavedNote; updateNote: (id: 
     if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
     return 0;
   }, [note.duration]);
+
+  const accountRoleId = useMemo(() => {
+    try {
+      const raw = localStorage.getItem("syag-account");
+      if (raw) return JSON.parse(raw)?.roleId as string | undefined;
+    } catch { /* ignore */ }
+    return undefined;
+  }, []);
 
   const metrics = useMemo(() => {
     if (note.coachingMetrics) return note.coachingMetrics;
@@ -617,31 +651,87 @@ function CoachingView({ note, updateNote }: { note: SavedNote; updateNote: (id: 
     return computed;
   }, [note.coachingMetrics, note.transcript, meetingDurationSec, note.id, updateNote]);
 
+  const heuristics = useMemo(() => {
+    if (!note.transcript?.length || meetingDurationSec <= 0) return null;
+    const h = computeConversationHeuristics(note.transcript, meetingDurationSec, accountRoleId);
+    const tags = [...h.suggestedHabitTags];
+    if (metrics && metrics.totalFillerCount >= 12) tags.push("filler_heavy");
+    if (metrics && metrics.fillerWordsPerMinute >= 3) tags.push("filler_heavy");
+    return { ...h, suggestedHabitTags: [...new Set(tags)] };
+  }, [note.transcript, meetingDurationSec, accountRoleId, metrics]);
+
   const [roleInsights, setRoleInsights] = useState<string[]>(metrics?.roleInsights ?? []);
   const [insightsLoading, setInsightsLoading] = useState(false);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationFailed, setConversationFailed] = useState(false);
+  const conversationAnalysisStarted = useRef(false);
+
+  useEffect(() => {
+    setConversationFailed(false);
+    conversationAnalysisStarted.current = false;
+  }, [note.id]);
 
   useEffect(() => {
     if (!metrics || metrics.roleInsights?.length || !api?.coaching) return;
     let cancelled = false;
     (async () => {
-      let roleId: string | undefined;
-      try {
-        const raw = localStorage.getItem('syag-account');
-        if (raw) roleId = JSON.parse(raw)?.roleId;
-      } catch { /* ignore */ }
-      if (!roleId || cancelled) return;
+      if (!accountRoleId || cancelled) return;
       setInsightsLoading(true);
       try {
-        const result = await api.coaching!.generateRoleInsights(metrics, roleId);
+        const result = await api.coaching!.generateRoleInsights(metrics, accountRoleId);
         if (!cancelled && result.roleInsights.length > 0) {
           setRoleInsights(result.roleInsights);
-          updateNote(note.id, { coachingMetrics: { ...metrics, roleInsights: result.roleInsights, roleId } });
+          updateNote(note.id, { coachingMetrics: { ...metrics, roleInsights: result.roleInsights, roleId: accountRoleId } });
         }
       } catch { /* ignore */ }
       if (!cancelled) setInsightsLoading(false);
     })();
-    return () => { cancelled = true; };
-  }, [metrics, api, note.id, updateNote]);
+    return () => {
+      cancelled = true;
+    };
+  }, [metrics, api, note.id, updateNote, accountRoleId]);
+
+  useEffect(() => {
+    if (
+      !metrics ||
+      metrics.conversationInsights != null ||
+      !api?.coaching?.analyzeConversation ||
+      !note.transcript?.length ||
+      !accountRoleId ||
+      conversationAnalysisStarted.current
+    ) {
+      return;
+    }
+    conversationAnalysisStarted.current = true;
+    let cancelled = false;
+    setConversationLoading(true);
+    (async () => {
+      try {
+        const { roleInsights: _ri, conversationInsights: _ci, ...metricsForApi } = metrics;
+        const result = await api.coaching!.analyzeConversation({
+          transcript: note.transcript,
+          metrics: metricsForApi as unknown as Record<string, unknown>,
+          heuristics,
+          roleId: accountRoleId,
+        });
+        if (cancelled) return;
+        if (result) {
+          updateNote(note.id, { coachingMetrics: { ...metrics, conversationInsights: result } });
+        } else {
+          setConversationFailed(true);
+        }
+      } catch {
+        if (!cancelled) setConversationFailed(true);
+      } finally {
+        if (!cancelled) setConversationLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [metrics, api, note.id, note.transcript, updateNote, accountRoleId, heuristics]);
+
+  const conv = metrics?.conversationInsights;
 
   if (!metrics) {
     return (
@@ -655,7 +745,173 @@ function CoachingView({ note, updateNote }: { note: SavedNote; updateNote: (id: 
 
   return (
     <div className="space-y-4">
-      {/* Role-specific coaching insights */}
+      {/* Deterministic signals (transparent chips) */}
+      {!accountRoleId && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-muted-foreground">
+          Choose your <span className="font-medium text-foreground">role</span> in Settings to unlock transcript-grounded coaching and role frameworks.
+        </div>
+      )}
+
+      {heuristics && (
+        <div className="rounded-xl border border-border bg-muted/30 px-3 py-2.5 space-y-2">
+          <h4 className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Signals we measured</h4>
+          <div className="flex flex-wrap gap-1.5">
+            <span className="rounded-md bg-background border border-border px-2 py-0.5 text-[10px] text-foreground">
+              Your turns: {heuristics.yourTurns}
+            </span>
+            <span className="rounded-md bg-background border border-border px-2 py-0.5 text-[10px] text-foreground">
+              Questions (you): {Math.round(heuristics.questionRatioYou * 100)}% of turns
+            </span>
+            <span className="rounded-md bg-background border border-border px-2 py-0.5 text-[10px] text-foreground">
+              Longest run (you): {heuristics.longestYouMonologueWords} words
+            </span>
+            {heuristics.suggestedHabitTags.map((t) => (
+              <span
+                key={t}
+                className="rounded-md bg-accent/10 border border-accent/25 px-2 py-0.5 text-[10px] text-accent font-medium"
+              >
+                {t.replace(/_/g, " ")}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Transcript-grounded conversation analysis */}
+      {(conv || conversationLoading) && (
+        <div className="rounded-xl border border-primary/25 bg-primary/5 p-4 space-y-3">
+          <h4 className="text-xs font-medium text-primary uppercase tracking-wider flex items-center gap-1.5">
+            <MessageSquare className="h-3 w-3" />
+            Conversation quality
+          </h4>
+          {conversationLoading && !conv ? (
+            <p className="text-[12px] text-muted-foreground animate-pulse">Analyzing transcript and role frameworks…</p>
+          ) : conv ? (
+            <>
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Pattern</p>
+                <p className="text-[15px] font-semibold text-foreground leading-snug">{conv.headline}</p>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-card/80 p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1.5">What we noticed</p>
+                <p className="text-[13px] text-foreground leading-relaxed">{conv.narrative}</p>
+              </div>
+              {conv.habitTags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {conv.habitTags.map((t) => (
+                    <span
+                      key={t}
+                      className="rounded-full bg-secondary px-2 py-0.5 text-[10px] text-secondary-foreground"
+                    >
+                      {t.replace(/_/g, " ")}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Micro-insights</p>
+                <ul className="space-y-2">
+                  {conv.microInsights.map((m, i) => (
+                    <li key={i} className="text-[12px] text-foreground leading-relaxed border-l-2 border-primary/30 pl-3">
+                      <span>{m.text}</span>
+                      {m.framework && (
+                        <span className="block text-[10px] text-muted-foreground mt-0.5">Framework: {m.framework}</span>
+                      )}
+                      {m.evidenceQuote && (
+                        <blockquote className="mt-1 text-[11px] text-muted-foreground italic border-l border-border pl-2">
+                          “{m.evidenceQuote}”
+                          {(m.speaker || m.time) && (
+                            <span className="not-italic text-[10px] block mt-0.5">
+                              {[m.speaker, m.time].filter(Boolean).join(" · ")}
+                            </span>
+                          )}
+                        </blockquote>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              {conv.keyMoments.length > 0 && onJumpToTranscriptLine && (
+                <div className="space-y-2 pt-1">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                    <Quote className="h-3 w-3" />
+                    Key moments (transcript)
+                  </p>
+                  <ul className="space-y-2">
+                    {conv.keyMoments.map((km, i) => {
+                      const idx = findTranscriptLineIndexForQuote(note.transcript, km.quote);
+                      return (
+                        <li
+                          key={i}
+                          className="flex items-start justify-between gap-2 rounded-md border border-border bg-background/80 p-2"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[11px] font-medium text-foreground">{km.title}</p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">“{km.quote}”</p>
+                            <p className="text-[9px] text-muted-foreground mt-0.5">
+                              {km.speaker} · {km.time}
+                            </p>
+                          </div>
+                          {idx !== undefined && (
+                            <button
+                              type="button"
+                              onClick={() => onJumpToTranscriptLine(idx)}
+                              className="shrink-0 rounded-md border border-border p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                              title="Show in transcript"
+                            >
+                              <Crosshair className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </>
+          ) : null}
+        </div>
+      )}
+
+      {conversationFailed && !conv && !conversationLoading && accountRoleId && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2">
+          <p className="text-[11px] text-muted-foreground">
+            Conversation analysis didn’t complete. Check your AI model in Settings, or use Ask → Coach me.
+          </p>
+          <button
+            type="button"
+            className="shrink-0 text-[11px] font-medium text-accent hover:underline"
+            onClick={async () => {
+              if (!api?.coaching?.analyzeConversation || !metrics || !heuristics) return;
+              conversationAnalysisStarted.current = true;
+              setConversationFailed(false);
+              setConversationLoading(true);
+              try {
+                const { roleInsights: _ri, conversationInsights: _ci, ...metricsForApi } = metrics;
+                const result = await api.coaching.analyzeConversation({
+                  transcript: note.transcript,
+                  metrics: metricsForApi as unknown as Record<string, unknown>,
+                  heuristics,
+                  roleId: accountRoleId,
+                });
+                if (result) {
+                  updateNote(note.id, { coachingMetrics: { ...metrics, conversationInsights: result } });
+                } else {
+                  setConversationFailed(true);
+                }
+              } catch {
+                setConversationFailed(true);
+              } finally {
+                setConversationLoading(false);
+              }
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Role-specific coaching insights (metrics + KB) */}
       {(roleInsights.length > 0 || insightsLoading) && (
         <div className="rounded-xl border border-accent/30 bg-accent/5 p-4 space-y-2">
           <h4 className="text-xs font-medium text-accent uppercase tracking-wider flex items-center gap-1.5">
@@ -676,7 +932,6 @@ function CoachingView({ note, updateNote }: { note: SavedNote; updateNote: (id: 
         </div>
       )}
 
-      {/* Communication mix bar */}
       <CommunicationMixBar metrics={metrics} />
 
       <CoachingCard metrics={metrics} meetingDurationSec={meetingDurationSec} />

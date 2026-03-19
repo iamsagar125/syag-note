@@ -4,6 +4,14 @@ All notable changes to Syag are documented here. **Keep this file updated with e
 
 ---
 
+## [1.3.1]
+
+- **Conversation coaching (Work Coach–style):** Transcript-grounded analysis with headline, narrative, evidence-linked micro-insights, habit tags, and key moments (jump-to in transcript). Role KB excerpt + deterministic heuristics (questions, monologue, sales cues). Cross-meeting synthesis on Coaching page; optional audio clips documented as future opt-in (`docs/coaching-audio-opt-in.md`).
+- **Tray agenda:** Tray window / agenda sync flow (`tray-agenda-window`, `TrayAgendaPage`, `TrayAgendaSync`).
+- **Capture & STT:** Per-channel Whisper context continuity; mic debug logging merged with buffer drain fixes; calendar sync labels (`getSyncLabel`).
+- **Docs:** `docs/local-stt-setup.md`, `docs/optional-provider-install.md`, `docs/transcript-me-them.md`, README architecture reference.
+- **Repo hygiene:** `.cursor/` in `.gitignore`.
+
 ## [1.3.0]
 
 - **Screenshot / recording privacy:** Content protection replaced with window hide/show; Syag can be hidden from screen share during recording.

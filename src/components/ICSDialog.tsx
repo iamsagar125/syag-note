@@ -59,7 +59,7 @@ export function ICSDialog({ open, onOpenChange, provider, onSuccess }: ICSDialog
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      importFromFile(reader.result as string, file.name);
+      importFromFile(reader.result as string, file.name, provider);
       finishSuccess(provider);
     };
     reader.readAsText(file);
@@ -67,7 +67,7 @@ export function ICSDialog({ open, onOpenChange, provider, onSuccess }: ICSDialog
 
   const handleUrl = async () => {
     if (!url.trim()) return;
-    const ok = await importFromUrl(url.trim());
+    const ok = await importFromUrl(url.trim(), provider);
     if (ok) finishSuccess(provider);
   };
 

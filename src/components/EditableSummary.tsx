@@ -74,6 +74,20 @@ function serializeBullets(bullets: BulletWithSub[]): string {
     .join("\n");
 }
 
+/** Strip **bold** markdown so raw asterisks are not shown in the UI. */
+function stripBoldMarkdown(s: string): string {
+  if (typeof s !== "string") return s;
+  return s.replace(/\*\*([^*]*)\*\*/g, "$1");
+}
+
+/** Capitalize first character for display (e.g. action item text). */
+function capitalizeFirst(s: string): string {
+  if (typeof s !== "string" || s.length === 0) return s;
+  const first = s[0];
+  if (/[a-z]/.test(first)) return first.toUpperCase() + s.slice(1);
+  return s;
+}
+
 interface DiscussionTopic {
   topic: string;
   summary: string;
@@ -237,7 +251,7 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
   const attachments = localSummary.attachments || [];
 
   return (
-    <div className="animate-fade-in space-y-4 font-body" onPaste={handlePaste}>
+    <div className="animate-fade-in space-y-2.5 font-body" onPaste={handlePaste}>
       {attendees.length > 0 && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <Users className="h-3 w-3 text-muted-foreground/40" />
@@ -261,15 +275,15 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
                 }
                 if (e.key === "Escape") setEditingField(null);
               }}
-              className="w-full resize-none bg-transparent text-[15px] leading-relaxed font-medium text-foreground focus:outline-none"
+              className="w-full resize-none bg-transparent text-[14px] leading-snug font-medium text-foreground focus:outline-none"
               rows={2}
             />
           ) : (
             <p
               onClick={() => setEditingField("overview")}
-              className="text-[15px] leading-relaxed font-medium text-foreground cursor-text hover:bg-secondary/30 rounded px-1 -mx-1 transition-colors"
+              className="text-[14px] leading-snug font-medium text-foreground cursor-text hover:bg-secondary/30 rounded px-1 -mx-1 transition-colors"
             >
-              {localSummary.overview}
+              {stripBoldMarkdown(localSummary.overview)}
               <Pencil className="inline-block ml-1 h-2.5 w-2.5 text-muted-foreground/0 group-hover/section:text-muted-foreground/30 transition-colors" />
               <CopyButton getText={() => overviewToMarkdown(localSummary)} />
             </p>
@@ -297,20 +311,20 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
                   }
                   if (e.key === "Escape") setEditingField(null);
                 }}
-                className="text-[15px] font-semibold text-foreground bg-transparent border-none outline-none focus:ring-0 w-full mb-1"
+                className="text-[14px] font-semibold text-foreground bg-transparent border-none outline-none focus:ring-0 w-full mb-0.5"
               />
             ) : (
               <h3
                 onClick={() => setEditingField(`topic-title-${i}`)}
-                className="text-[15px] font-semibold text-foreground mb-1 cursor-text hover:bg-secondary/30 rounded px-1 -mx-1 transition-colors"
+                className="text-[14px] font-semibold text-foreground mb-0.5 cursor-text hover:bg-secondary/30 rounded px-1 -mx-1 transition-colors"
               >
-                {topic.topic}
+                {stripBoldMarkdown(topic.topic)}
                 <Pencil className="inline-block ml-1 h-2.5 w-2.5 text-muted-foreground/0 group-hover/section:text-muted-foreground/30" />
               </h3>
             )}
             <ul className="space-y-0.5">
               {bullets.map((bullet, j) => (
-                <li key={j} className="text-[15px] leading-snug">
+                <li key={j} className="text-[14px] leading-snug">
                   <div className="flex gap-1.5">
                     <span className="mt-[7px] h-1 w-1 flex-shrink-0 rounded-full bg-foreground/15" />
                     {editingField === `topic-${i}-bullet-${j}` ? (
@@ -339,7 +353,7 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
                         onClick={() => setEditingField(`topic-${i}-bullet-${j}`)}
                         className="font-medium text-foreground/90 cursor-text hover:bg-secondary/30 rounded px-1 -mx-1"
                       >
-                        {bullet.text}
+                        {stripBoldMarkdown(bullet.text)}
                       </span>
                     )}
                   </div>
@@ -382,7 +396,7 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
                               onClick={() => setEditingField(`topic-${i}-bullet-${j}-sub-${k}`)}
                               className="text-[14px] text-foreground/80 cursor-text hover:bg-secondary/30 rounded px-1 -mx-1"
                             >
-                              {sub}
+                              {stripBoldMarkdown(sub)}
                             </span>
                           )}
                         </li>
@@ -398,10 +412,10 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
 
       {decisions.length > 0 && (
         <div className="group/section">
-          <h3 className="text-[15px] font-semibold text-foreground mb-1 flex items-center">Decisions<CopyButton getText={() => decisionsToMarkdown(localSummary)} /></h3>
+          <h3 className="text-[14px] font-semibold text-foreground mb-0.5 flex items-center">Decisions<CopyButton getText={() => decisionsToMarkdown(localSummary)} /></h3>
           <ul className="space-y-0.5">
             {decisions.map((d, i) => (
-              <li key={i} className="flex gap-1.5 text-[15px] font-medium text-foreground/90 leading-snug">
+              <li key={i} className="flex gap-1.5 text-[14px] font-medium text-foreground/90 leading-snug">
                 <span className="mt-[7px] h-1 w-1 flex-shrink-0 rounded-full bg-accent" />
                 {editingField === `decision-${i}` ? (
                   <input
@@ -425,7 +439,7 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
                     onClick={() => setEditingField(`decision-${i}`)}
                     className="cursor-text hover:bg-secondary/30 rounded px-1 -mx-1"
                   >
-                    {d}
+                    {stripBoldMarkdown(d)}
                   </span>
                 )}
               </li>
@@ -436,10 +450,10 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
 
       {keyPoints.length > 0 && topics.length === 0 && (
         <div className="group/section">
-          <h3 className="text-[15px] font-semibold text-foreground mb-1 flex items-center">Key Points<CopyButton getText={() => keyPointsToMarkdown(localSummary)} /></h3>
+          <h3 className="text-[14px] font-semibold text-foreground mb-0.5 flex items-center">Key Points<CopyButton getText={() => keyPointsToMarkdown(localSummary)} /></h3>
           <ul className="space-y-0.5">
             {keyPoints.map((point, i) => (
-              <li key={i} className="flex gap-1.5 text-[15px] font-medium text-foreground/90 leading-snug">
+              <li key={i} className="flex gap-1.5 text-[14px] font-medium text-foreground/90 leading-snug">
                 <span className="mt-[7px] h-1 w-1 flex-shrink-0 rounded-full bg-foreground/15" />
                 {editingField === `keypoint-${i}` ? (
                   <input
@@ -463,7 +477,7 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
                     onClick={() => setEditingField(`keypoint-${i}`)}
                     className="cursor-text hover:bg-secondary/30 rounded px-1 -mx-1"
                   >
-                    {point}
+                    {stripBoldMarkdown(point)}
                   </span>
                 )}
               </li>
@@ -474,104 +488,153 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
 
       {actions.length > 0 && (
         <div className="group/section">
-          <h3 className="text-[15px] font-semibold text-foreground mb-1.5 flex items-center">Action items<CopyButton getText={() => actionItemsToMarkdown(localSummary)} /></h3>
-          <div className="space-y-1">
-            {actionsWithIndices.map(({ item, rawIndex }, i) => {
-              const assigneeDisplay = item.assignee && !["You", "Unassigned", "[Unassigned]", "TBD", ""].includes(item.assignee.trim())
-                ? item.assignee
-                : "Unassigned";
-              const dueStr = "dueDate" in item && item.dueDate ? ` (by ${item.dueDate})` : "";
-              return (
-                <div key={i} className="flex items-start gap-1.5 text-[15px] font-medium leading-snug group/action">
-                  <span className="flex-shrink-0 w-5 text-muted-foreground">{i + 1}.</span>
-                  <button onClick={() => handleToggleActionDone(rawIndex)} className="mt-0.5 flex-shrink-0">
-                    {item.done ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 text-accent" />
-                    ) : (
-                      <Circle className="h-3.5 w-3.5 text-foreground/20 hover:text-foreground/40 transition-colors" />
-                    )}
-                  </button>
-                  <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-1">
-                    {editingField === `action-assignee-${i}` ? (
-                      <input
-                        autoFocus
-                        defaultValue={item.assignee || ""}
-                        onBlur={(e) => {
-                          handleActionAssigneeChange(rawIndex, e.target.value);
-                          setEditingField(null);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            handleActionAssigneeChange(rawIndex, (e.target as HTMLInputElement).value);
-                            setEditingField(null);
-                          }
-                          if (e.key === "Escape") setEditingField(null);
-                        }}
-                        className="min-w-[6rem] w-24 text-xs bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-ring text-foreground"
-                        placeholder="Assignee"
-                      />
-                    ) : (
-                      <span
-                        onClick={() => setEditingField(`action-assignee-${i}`)}
-                        className="text-xs text-muted-foreground cursor-text hover:bg-secondary/30 rounded px-1 -mx-1 inline-flex items-center gap-0.5"
-                        title="Click to edit assignee"
-                      >
-                        {assigneeDisplay}
-                        <Pencil className="h-2.5 w-2.5 text-muted-foreground/0 group-hover/action:text-muted-foreground/50 transition-colors" />
-                      </span>
-                    )}
-                    <span className="text-muted-foreground/60">—</span>
-                    {editingField === `action-${i}` ? (
-                      <input
-                        autoFocus
-                        defaultValue={item.text}
-                        onBlur={(e) => {
-                          handleActionTextChange(rawIndex, e.target.value);
-                          setEditingField(null);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            handleActionTextChange(rawIndex, (e.target as HTMLInputElement).value);
-                            setEditingField(null);
-                          }
-                          if (e.key === "Escape") setEditingField(null);
-                        }}
-                        className={cn(
-                          "flex-1 min-w-0 bg-transparent border-none outline-none focus:ring-0",
-                          item.done && "text-muted-foreground/60 line-through"
+          <h3 className="text-[14px] font-semibold text-foreground mb-1 flex items-center">Action items<CopyButton getText={() => actionItemsToMarkdown(localSummary)} /></h3>
+          <div className="rounded-md border border-border overflow-hidden">
+            <table className="w-full border-collapse text-[14px]">
+              <thead>
+                <tr className="border-b border-border bg-muted/30 text-left text-[12px] text-muted-foreground font-medium">
+                  <th className="w-8 p-1.5" aria-label="Done" />
+                  <th className="w-7 p-1.5">#</th>
+                  <th className="p-1.5 min-w-0">Task</th>
+                  <th className="w-28 p-1.5">Assignee</th>
+                  <th className="w-10 p-1.5" aria-label="Jira" />
+                </tr>
+              </thead>
+              <tbody>
+                {actionsWithIndices.map(({ item, rawIndex }, i) => {
+                  const assigneeTrim = (item.assignee || "").trim();
+                  const isUnassigned = !assigneeTrim || ["You", "Unassigned", "[Unassigned]", "TBD"].includes(assigneeTrim);
+                  const isMe = assigneeTrim === "Me";
+                  const assigneeDisplay = isUnassigned ? "Unassigned" : stripBoldMarkdown(item.assignee || "");
+                  const dueStr = "dueDate" in item && item.dueDate ? item.dueDate : null;
+                  return (
+                    <tr key={i} className="group/action border-b border-border/50 last:border-b-0 hover:bg-muted/20 transition-colors">
+                      <td className="p-1.5 align-top">
+                        <button onClick={() => handleToggleActionDone(rawIndex)} className="flex-shrink-0">
+                          {item.done ? (
+                            <CheckCircle2 className="h-4 w-4 text-accent" />
+                          ) : (
+                            <Circle className="h-4 w-4 text-foreground/25 hover:text-foreground/50 transition-colors" />
+                          )}
+                        </button>
+                      </td>
+                      <td className="p-1.5 align-top text-muted-foreground">{i + 1}.</td>
+                      <td className="p-1.5 align-top min-w-0 break-words">
+                        {editingField === `action-${i}` ? (
+                          <input
+                            autoFocus
+                            defaultValue={item.text}
+                            onBlur={(e) => {
+                              handleActionTextChange(rawIndex, e.target.value);
+                              setEditingField(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                handleActionTextChange(rawIndex, (e.target as HTMLInputElement).value);
+                                setEditingField(null);
+                              }
+                              if (e.key === "Escape") setEditingField(null);
+                            }}
+                            className={cn(
+                              "w-full text-[14px] bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:ring-1 focus:ring-ring text-foreground",
+                              item.done && "text-muted-foreground/60 line-through"
+                            )}
+                          />
+                        ) : (
+                          <span
+                            onClick={() => setEditingField(`action-${i}`)}
+                            className={cn(
+                              "block text-[14px] leading-snug cursor-text hover:bg-secondary/20 rounded px-1 -mx-1 py-0.5 break-words",
+                              item.done ? "text-muted-foreground/60 line-through" : "text-foreground/95"
+                            )}
+                          >
+                            {capitalizeFirst(stripBoldMarkdown(item.text))}
+                          </span>
                         )}
-                      />
-                    ) : (
-                      <span
-                        onClick={() => setEditingField(`action-${i}`)}
-                        className={cn(
-                          "cursor-text hover:bg-secondary/30 rounded px-1 -mx-1",
-                          item.done ? "text-muted-foreground/60 line-through" : "text-foreground/90"
+                        {dueStr && (
+                          <span className="block text-[12px] text-muted-foreground mt-0.5">by {dueStr}</span>
                         )}
-                      >
-                        {item.text}
-                      </span>
-                    )}
-                    {dueStr && <span className="text-muted-foreground/70">{dueStr}</span>}
-                    {/* Jira badge or create button */}
-                    {item.jiraIssueKey && item.jiraIssueUrl ? (
-                      <JiraStatusBadge issueKey={item.jiraIssueKey} issueUrl={item.jiraIssueUrl} />
-                    ) : (
-                      <button
-                        onClick={() => setJiraDialogItem({ index: rawIndex, item })}
-                        className="opacity-0 group-hover/action:opacity-100 transition-opacity inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] text-muted-foreground/50 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30"
-                        title="Create Jira ticket"
-                      >
-                        <svg className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor">
-                          <path d="M11.53 2L3 10.53V14.47L11.53 22L14.47 22L22 14.47V10.53L11.53 2Z" />
-                        </svg>
-                        Jira
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                      </td>
+                      <td className="p-1.5 align-top text-[12px] text-muted-foreground whitespace-nowrap">
+                        {editingField === `action-assignee-${i}` ? (
+                          <div className="flex items-center gap-0.5">
+                            <input
+                              data-action-assignee-input={i}
+                              autoFocus
+                              defaultValue={item.assignee || ""}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  handleActionAssigneeChange(rawIndex, (e.target as HTMLInputElement).value);
+                                  setEditingField(null);
+                                }
+                                if (e.key === "Escape") setEditingField(null);
+                              }}
+                              className="min-w-[4rem] flex-1 text-[12px] bg-transparent border border-border rounded px-1 py-0.5 outline-none focus:ring-1 focus:ring-ring text-foreground"
+                              placeholder="Assignee"
+                            />
+                            <button
+                              onClick={() => {
+                                const input = document.querySelector(`[data-action-assignee-input="${i}"]`) as HTMLInputElement;
+                                if (input) handleActionAssigneeChange(rawIndex, input.value);
+                                setEditingField(null);
+                              }}
+                              className="p-0.5 rounded hover:bg-secondary text-accent"
+                              title="Save"
+                            >
+                              <Check className="h-3 w-3" />
+                            </button>
+                            <button
+                              onClick={() => setEditingField(null)}
+                              className="p-0.5 rounded hover:bg-secondary text-muted-foreground"
+                              title="Cancel"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ) : isUnassigned ? (
+                          <span className="inline-flex items-center gap-1">
+                            <span>Unassigned</span>
+                            <button
+                              onClick={() => handleActionAssigneeChange(rawIndex, "Me")}
+                              className="text-[11px] font-medium text-accent hover:underline"
+                            >
+                              Assign to me
+                            </button>
+                          </span>
+                        ) : isMe ? (
+                          <span>Me</span>
+                        ) : (
+                          <span
+                            onClick={() => setEditingField(`action-assignee-${i}`)}
+                            className="cursor-text hover:bg-secondary/30 rounded px-0.5 -mx-0.5 inline-flex items-center gap-0.5"
+                            title="Click to edit assignee"
+                          >
+                            {assigneeDisplay}
+                            <Pencil className="h-2.5 w-2.5 text-muted-foreground/0 group-hover/action:text-muted-foreground/50 transition-colors" />
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-1.5 align-top">
+                        {item.jiraIssueKey && item.jiraIssueUrl ? (
+                          <JiraStatusBadge issueKey={item.jiraIssueKey} issueUrl={item.jiraIssueUrl} />
+                        ) : (
+                          <button
+                            onClick={() => setJiraDialogItem({ index: rawIndex, item })}
+                            className="opacity-0 group-hover/action:opacity-100 transition-opacity inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-muted-foreground/60 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                            title="Create Jira ticket"
+                          >
+                            <svg className="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M11.53 2L3 10.53V14.47L11.53 22L14.47 22L22 14.47V10.53L11.53 2Z" />
+                            </svg>
+                            Jira
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -610,8 +673,8 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
         <div className="pt-1 group/section">
           {quotes.map((q, i) => (
             <blockquote key={i} className="border-l-2 border-accent/20 pl-2.5 py-0.5">
-              <p className="text-[14px] italic font-medium text-foreground/80">"{q.text}"</p>
-              <p className="text-[12px] text-muted-foreground/70">— {q.speaker}</p>
+              <p className="text-[14px] italic font-medium text-foreground/80">"{stripBoldMarkdown(q.text)}"</p>
+              <p className="text-[12px] text-muted-foreground/70">— {stripBoldMarkdown(q.speaker)}</p>
             </blockquote>
           ))}
         </div>
@@ -619,7 +682,7 @@ export function EditableSummary({ summary, onUpdate, meetingTitle, meetingDate }
 
       {attachments.length > 0 && (
         <div className="pt-2">
-          <h3 className="text-[15px] font-semibold text-foreground mb-1.5">Attachments</h3>
+          <h3 className="text-[14px] font-semibold text-foreground mb-1">Attachments</h3>
           <div className="flex flex-wrap gap-2">
             {attachments.map((att, i) => (
               <div key={i} className="relative group/thumb rounded-lg border border-border overflow-hidden bg-muted/30">

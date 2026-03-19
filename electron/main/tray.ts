@@ -1,4 +1,6 @@
 import { Tray, Menu, BrowserWindow, nativeImage, app, Notification } from 'electron'
+import { getSetting } from './storage/database'
+import { toggleTrayAgendaWindow } from './tray-agenda-window'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { TRAY_ICON_BASE64, TRAY_ICON_RECORDING_BASE64 } from './tray-icons.generated'
@@ -104,18 +106,28 @@ export function setupTray(win: BrowserWindow): void {
       mainWindow?.show()
       mainWindow?.focus()
       mainWindow?.webContents.send('tray:navigate-to-meeting')
+      return
+    }
+    if (getSetting('tray-calendar-agenda') === 'true' && tray) {
+      toggleTrayAgendaWindow(tray.getBounds())
+      return
+    }
+    if (mainWindow?.isVisible()) {
+      mainWindow.focus()
     } else {
-      if (mainWindow?.isVisible()) {
-        mainWindow.focus()
-      } else {
-        mainWindow?.show()
-      }
+      mainWindow?.show()
     }
   })
 }
 
 function rebuildMenu(): void {
   if (!tray || !mainWindow) return
+
+  // Agenda popover carries New note / Go to app / Quit — hide duplicate native menu while idle.
+  if (getSetting('tray-calendar-agenda') === 'true' && !isRecording) {
+    tray.setContextMenu(null)
+    return
+  }
 
   const template: Electron.MenuItemConstructorOptions[] = []
 
@@ -171,7 +183,7 @@ function rebuildMenu(): void {
 
   template.push({ type: 'separator' })
   template.push({
-    label: 'Show Syag',
+    label: 'Go to app',
     click: () => {
       mainWindow?.show()
       mainWindow?.focus()
@@ -179,7 +191,7 @@ function rebuildMenu(): void {
   })
   template.push({ type: 'separator' })
   template.push({
-    label: 'Quit Syag',
+    label: 'Quit app',
     accelerator: 'CommandOrControl+Q',
     click: () => {
       mainWindow?.removeAllListeners('close')
@@ -188,6 +200,11 @@ function rebuildMenu(): void {
   })
 
   tray.setContextMenu(Menu.buildFromTemplate(template))
+}
+
+/** Call after toggling tray-calendar-agenda so context menu matches mode. */
+export function rebuildTrayContextMenu(): void {
+  rebuildMenu()
 }
 
 export function updateTrayRecordingState(recording: boolean): void {

@@ -1,6 +1,13 @@
 import { createContext, useContext, useState, useEffect, useMemo, ReactNode, useCallback } from "react";
 import { toast } from "sonner";
-import { isElectron, getElectronAPI } from "@/lib/electron-api";
+import { isElectron, getElectronAPI, type LocalSetupResult } from "@/lib/electron-api";
+
+function setupToastDescription(r: LocalSetupResult): string {
+  const lines = [...r.steps]
+  if (r.error) lines.push("", r.error)
+  if (r.hint) lines.push("", r.hint)
+  return lines.join("\n")
+}
 
 export type ModelProvider = {
   id: string;
@@ -30,9 +37,9 @@ export type LocalModel = {
 };
 
 export const localModels: LocalModel[] = [
-  { id: "mlx-whisper-large-v3-turbo", name: "MLX Whisper Large V3 Turbo", size: "~3 GB", type: "stt", description: "Best quality — uses Apple Neural Engine. Click Download to install (ffmpeg + mlx-whisper)." },
-  { id: "mlx-whisper-large-v3-turbo-8bit", name: "MLX Whisper Large V3 Turbo (8-bit)", size: "~864 MB", type: "stt", description: "8-bit quantized — smaller, faster. Click Download to install (ffmpeg + mlx-audio-plus)." },
-  { id: "whisper-large-v3-turbo", name: "Whisper Large V3 Turbo", size: "1.6 GB", type: "stt", description: "Recommended — runs on any Mac via whisper.cpp" },
+  { id: "mlx-whisper-large-v3-turbo", name: "MLX Whisper Large V3 Turbo", size: "~3 GB", type: "stt", description: "Apple Silicon — Syag auto-installs ffmpeg (Homebrew) + pip package; toasts show each step" },
+  { id: "mlx-whisper-large-v3-turbo-8bit", name: "MLX Whisper Large V3 Turbo (8-bit)", size: "~864 MB", type: "stt", description: "Smaller MLX build — same auto steps (ffmpeg + pip); step-by-step toasts" },
+  { id: "whisper-large-v3-turbo", name: "Whisper Large V3 Turbo", size: "1.6 GB", type: "stt", description: "Recommended — model download + whisper-cli setup (build or Homebrew); toasts list progress" },
   { id: "llama-3.2-3b", name: "Llama 3.2 3B", size: "2.0 GB", type: "llm", description: "Compact local LLM" },
   { id: "phi-3-mini", name: "Phi-3 Mini", size: "2.3 GB", type: "llm", description: "Microsoft's efficient model" },
   { id: "gemma-2-2b", name: "Gemma 2 2B", size: "1.6 GB", type: "llm", description: "Google's lightweight model" },
@@ -247,6 +254,21 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
         if (data.modelId === "gemma-2-2b") {
           setSelectedAIModel((prev) => (prev === "" ? "local:gemma-2-2b" : prev));
         }
+        if (data.modelId === "whisper-large-v3-turbo" && data.whisperCli) {
+          const r = data.whisperCli
+          const desc = setupToastDescription(r)
+          if (r.ok) {
+            toast.success("Whisper model + speech CLI ready", {
+              description: desc,
+              duration: 14_000,
+            })
+          } else {
+            toast.warning("Model file saved — speech CLI still needed", {
+              description: desc,
+              duration: 22_000,
+            })
+          }
+        }
       } else {
         setDownloadStates((prev) => {
           const next = { ...prev };
@@ -310,37 +332,55 @@ export function ModelSettingsProvider({ children }: { children: ReactNode }) {
 
     if (modelId === 'mlx-whisper-large-v3-turbo' && api) {
       try {
-        const success = await api.models.installMLXWhisper();
-        if (success) {
+        const result = await api.models.installMLXWhisper();
+        if (result.ok) {
           setHiddenLocalModels((prev) => prev.filter((id) => id !== modelId));
           setDownloadStates((prev) => ({ ...prev, [modelId]: "downloaded" }));
-          toast.success("MLX Whisper ready (ffmpeg + mlx-whisper installed)");
+          toast.success("MLX Whisper ready", {
+            description: setupToastDescription(result),
+            duration: 14_000,
+          });
         } else {
           setDownloadStates((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
-          toast.error("MLX Whisper install failed. Install Python 3, then: brew install ffmpeg && pip3 install mlx-whisper");
+          toast.error("MLX Whisper install did not finish", {
+            description: setupToastDescription(result),
+            duration: 22_000,
+          });
         }
       } catch (err) {
         console.error('MLX Whisper install failed:', err);
         setDownloadStates((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
-        toast.error("MLX Whisper install failed. Ensure Python 3 is installed.");
+        toast.error("MLX Whisper install failed", {
+          description: err instanceof Error ? err.message : "Ensure Python 3 and pip are available.",
+          duration: 12_000,
+        });
       }
       return;
     }
     if (modelId === 'mlx-whisper-large-v3-turbo-8bit' && api) {
       try {
-        const success = api.models.installMLXWhisper8Bit ? await api.models.installMLXWhisper8Bit() : false;
-        if (success) {
+        const result = api.models.installMLXWhisper8Bit ? await api.models.installMLXWhisper8Bit() : { ok: false, steps: [], error: "Not available" };
+        if (result.ok) {
           setHiddenLocalModels((prev) => prev.filter((id) => id !== modelId));
           setDownloadStates((prev) => ({ ...prev, [modelId]: "downloaded" }));
-          toast.success("MLX Whisper 8-bit ready (ffmpeg + mlx-audio-plus installed)");
+          toast.success("MLX Whisper 8-bit ready", {
+            description: setupToastDescription(result),
+            duration: 14_000,
+          });
         } else {
           setDownloadStates((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
-          toast.error("8-bit install failed. Run: brew install ffmpeg && pip3 install mlx-audio-plus");
+          toast.error("MLX 8-bit install did not finish", {
+            description: setupToastDescription(result),
+            duration: 22_000,
+          });
         }
       } catch (err) {
         console.error('MLX Whisper 8-bit install failed:', err);
         setDownloadStates((prev) => { const n = { ...prev }; delete n[modelId]; return n; });
-        toast.error("MLX Whisper 8-bit install failed. Ensure Python 3 is installed.");
+        toast.error("MLX 8-bit install failed", {
+          description: err instanceof Error ? err.message : "Ensure Python 3 and pip are available.",
+          duration: 12_000,
+        });
       }
       return;
     }
