@@ -4,6 +4,12 @@ All notable changes to Syag are documented here. **Keep this file updated with e
 
 ---
 
+## [1.3.2]
+
+- **Action items:** Summaries default to **unassigned** owners; no auto-**Me**/**You** from the model. Optional `accountDisplayName` on summarize for assignee normalization.
+- **Jira:** Icon-only control in the action-items table (no visible “Jira” label).
+- **Coaching:** Meeting-effectiveness prompt and UI (transcript + role first); metrics-only coaching as fallback when transcript analysis fails; supporting signals labeled as secondary.
+
 ## [1.3.1]
 
 - **Conversation coaching (Work Coach–style):** Transcript-grounded analysis with headline, narrative, evidence-linked micro-insights, habit tags, and key moments (jump-to in transcript). Role KB excerpt + deterministic heuristics (questions, monologue, sales cues). Cross-meeting synthesis on Coaching page; optional audio clips documented as future opt-in (`docs/coaching-audio-opt-in.md`).
