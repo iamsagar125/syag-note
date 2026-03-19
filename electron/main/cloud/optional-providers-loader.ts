@@ -13,6 +13,7 @@
 import { app, ipcMain } from 'electron'
 import { join, resolve } from 'path'
 import { readdirSync, existsSync } from 'fs'
+import { createRequire } from 'module'
 import {
   registerOptionalProvider,
   getApiKey,
@@ -46,11 +47,14 @@ function loadOptionalProvidersFromDir(dir: string, skipIfAlreadyRegistered: bool
     const jsPath = join(dir, `${id}.js`)
     if (!existsSync(jsPath)) continue
     try {
-      const mod = require(jsPath)
+      // Use createRequire to get a real Node.js require, bypassing Vite's bundled
+      // require which routes through ESM and breaks on optional provider files.
+      const nodeRequire = createRequire(join(dir, '_'))
+      const mod = nodeRequire(jsPath)
       if (typeof mod.register !== 'function') continue
       let anthropic: OptionalProviderAPI['anthropic']
       try {
-        anthropic = require('@anthropic-ai/sdk').default
+        anthropic = nodeRequire('@anthropic-ai/sdk').default
       } catch {
         anthropic = null
       }
