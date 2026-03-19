@@ -1,4 +1,5 @@
 import { ipcMain, systemPreferences, desktopCapturer, app, safeStorage, BrowserWindow } from 'electron'
+import { getMainWindow } from './windows'
 import { updateTrayRecordingState, updateTrayMeetingInfo, rebuildTrayContextMenu } from './tray'
 import { setCalendarEvents } from './meeting-detector'
 import {
@@ -775,13 +776,11 @@ export function registerIPCHandlers(): void {
 
   // --- Window visibility (for recording privacy) ---
   ipcMain.handle('window:hide', async () => {
-    const { getMainWindow } = require('./windows')
     const win = getMainWindow()
     if (win) win.hide()
   })
 
   ipcMain.handle('window:show', async () => {
-    const { getMainWindow } = require('./windows')
     const win = getMainWindow()
     if (win) win.show()
   })

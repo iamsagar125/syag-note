@@ -71,7 +71,7 @@ function loadOptionalProvidersFromDir(dir: string, skipIfAlreadyRegistered: bool
 export function loadOptionalProviders(): void {
   loadOptionalProvidersFromDir(join(app.getPath('userData'), 'optional-providers'), false)
 
-  if (!app.isPackaged()) {
+  if (!app.isPackaged) {
     const devCandidates = [
       resolve(process.cwd(), 'electron/main/cloud/optional-providers-dist'),
       resolve(app.getAppPath(), 'electron/main/cloud/optional-providers-dist'),
