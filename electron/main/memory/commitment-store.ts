@@ -1,5 +1,11 @@
 import { randomUUID } from 'crypto'
 import { getDb } from '../storage/database'
+import { isSyncEnabled, getChangeLogger } from '../storage/icloud-sync'
+
+function logCommitmentSync(op: 'INSERT' | 'UPDATE' | 'DELETE', id: string, data: Record<string, any> | null): void {
+  if (!isSyncEnabled()) return
+  getChangeLogger()?.logChange('commitments', op, id, data)
+}
 
 export function getAllCommitments(filters?: { status?: string; assigneeId?: string }): any[] {
   let sql = 'SELECT * FROM commitments'
@@ -70,7 +76,9 @@ export function addCommitment(data: {
     now,
     now
   )
-  return getCommitment(id)
+  const created = getCommitment(id)
+  if (created) logCommitmentSync('INSERT', id, created)
+  return created
 }
 
 export function updateCommitmentStatus(id: string, status: 'open' | 'completed' | 'overdue' | 'cancelled'): boolean {
@@ -79,6 +87,8 @@ export function updateCommitmentStatus(id: string, status: 'open' | 'completed' 
   getDb().prepare(`
     UPDATE commitments SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?
   `).run(status, completedAt, now, id)
+  const updated = getCommitment(id)
+  if (updated) logCommitmentSync('UPDATE', id, updated)
   return true
 }
 
@@ -108,6 +118,8 @@ export function updateCommitment(id: string, data: any): boolean {
   values.push(id)
 
   getDb().prepare(`UPDATE commitments SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  const updated = getCommitment(id)
+  if (updated) logCommitmentSync('UPDATE', id, updated)
   return true
 }
 

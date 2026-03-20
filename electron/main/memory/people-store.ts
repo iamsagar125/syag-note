@@ -1,5 +1,16 @@
 import { randomUUID } from 'crypto'
 import { getDb } from '../storage/database'
+import { isSyncEnabled, getChangeLogger } from '../storage/icloud-sync'
+
+function logPeopleSync(op: 'INSERT' | 'UPDATE' | 'DELETE', id: string, data: Record<string, any> | null): void {
+  if (!isSyncEnabled()) return
+  getChangeLogger()?.logChange('people', op, id, data)
+}
+
+function logNotePeopleSync(op: 'INSERT' | 'DELETE', noteId: string, personId: string, data: Record<string, any> | null): void {
+  if (!isSyncEnabled()) return
+  getChangeLogger()?.logChange('note_people', op, `${noteId}::${personId}`, data)
+}
 
 function levenshteinDistance(a: string, b: string): number {
   const m = a.length
@@ -48,7 +59,9 @@ export function upsertPerson(data: { name: string; email?: string; company?: str
       fields.push('last_seen = ?'); values.push(now)
       values.push(existing.id)
       db.prepare(`UPDATE people SET ${fields.join(', ')} WHERE id = ?`).run(...values)
-      return getPerson(existing.id)
+      const updated = getPerson(existing.id)
+      if (updated) logPeopleSync('UPDATE', existing.id, updated)
+      return updated
     }
   }
 
@@ -70,7 +83,9 @@ export function upsertPerson(data: { name: string; email?: string; company?: str
     INSERT INTO people (id, name, email, company, role, relationship, notes, first_seen, last_seen)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, data.name, data.email ?? null, data.company ?? null, data.role ?? null, data.relationship ?? null, data.notes ?? null, now, now)
-  return getPerson(id)
+  const created = getPerson(id)
+  if (created) logPeopleSync('INSERT', id, created)
+  return created
 }
 
 export function deletePerson(id: string): boolean {
@@ -78,6 +93,7 @@ export function deletePerson(id: string): boolean {
   db.prepare('DELETE FROM note_people WHERE person_id = ?').run(id)
   db.prepare('UPDATE commitments SET assignee_id = NULL WHERE assignee_id = ?').run(id)
   const result = db.prepare('DELETE FROM people WHERE id = ?').run(id)
+  if ((result as any).changes > 0) logPeopleSync('DELETE', id, null)
   return (result as any).changes > 0
 }
 
@@ -116,6 +132,7 @@ export function linkPersonToNote(noteId: string, personId: string, role?: string
   getDb().prepare(`
     INSERT OR IGNORE INTO note_people (note_id, person_id, role) VALUES (?, ?, ?)
   `).run(noteId, personId, role ?? 'attendee')
+  logNotePeopleSync('INSERT', noteId, personId, { note_id: noteId, person_id: personId, role: role ?? 'attendee' })
 }
 
 export function getNotePeople(noteId: string): any[] {
@@ -140,10 +157,13 @@ export function updatePerson(id: string, data: { name?: string; email?: string; 
   if (fields.length === 0) return false
   values.push(id)
   db.prepare(`UPDATE people SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  const updated = getPerson(id)
+  if (updated) logPeopleSync('UPDATE', id, updated)
   return true
 }
 
 export function unlinkPersonFromNote(noteId: string, personId: string): boolean {
   const result = getDb().prepare('DELETE FROM note_people WHERE note_id = ? AND person_id = ?').run(noteId, personId)
+  if ((result as any).changes > 0) logNotePeopleSync('DELETE', noteId, personId, null)
   return (result as any).changes > 0
 }

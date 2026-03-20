@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { FileText, Search, Settings, Sparkles, FolderOpen, Users, Briefcase, Star, Archive, Plus, X, Check, Home, Trash2, PanelLeftClose, PanelLeft, ArrowLeft, BarChart3, CheckCircle2, Contact } from "lucide-react";
 import { SyagLogo } from "@/components/SyagLogo";
+import { SyncStatusIndicator } from "@/components/SyncStatusIndicator";
 import { cn } from "@/lib/utils";
 import { isElectron } from "@/lib/electron-api";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -91,8 +92,11 @@ export function Sidebar() {
   return (
     <aside className="flex h-screen w-56 flex-shrink-0 flex-col bg-sidebar">
       {/* Logo only — collapse is in content top bar via SidebarTopBarLeft */}
-      <div className={cn("flex items-center gap-2 px-4 pb-2", isElectron ? "pt-10" : "pt-4")}>
-        <SyagLogo size={24} showText />
+      <div className={cn("flex items-center justify-between px-4 pb-2", isElectron ? "pt-10" : "pt-4")}>
+        <div className="flex items-center gap-2">
+          <SyagLogo size={24} showText />
+        </div>
+        <SyncStatusIndicator />
       </div>
 
       {/* Search */}

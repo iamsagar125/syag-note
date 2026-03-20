@@ -3,19 +3,41 @@ import { app } from 'electron'
 import { join } from 'path'
 import { mkdirSync } from 'fs'
 import { runMigrations } from './migrations'
+import type { SyncableTable } from './sync-types'
 
 let db: Database.Database | null = null
+let syncLogFn: ((table: SyncableTable, op: 'INSERT' | 'UPDATE' | 'DELETE', entityId: string, data: Record<string, any> | null) => void) | null = null
 
 export function getDb(): Database.Database {
   if (!db) throw new Error('Database not initialized. Call initDatabase() first.')
   return db
 }
 
-export function initDatabase(): void {
+export function getDbPath(): string {
   const userDataPath = app.getPath('userData')
-  const dbDir = join(userDataPath, 'data')
+  return join(userDataPath, 'data', 'syag.db')
+}
+
+export function closeDatabase(): void {
+  if (db) {
+    db.close()
+    db = null
+  }
+}
+
+/** Register a sync change logger callback. Called after every write when sync is enabled. */
+export function setSyncLogger(fn: typeof syncLogFn): void {
+  syncLogFn = fn
+}
+
+function logSync(table: SyncableTable, op: 'INSERT' | 'UPDATE' | 'DELETE', entityId: string, data: Record<string, any> | null): void {
+  if (syncLogFn) syncLogFn(table, op, entityId, data)
+}
+
+export function initDatabase(): void {
+  const dbPath = getDbPath()
+  const dbDir = join(dbPath, '..')
   mkdirSync(dbDir, { recursive: true })
-  const dbPath = join(dbDir, 'syag.db')
 
   db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
@@ -59,6 +81,15 @@ export function addNote(note: any): void {
     note.folderId || null,
     note.coachingMetrics ? JSON.stringify(note.coachingMetrics) : null
   )
+  logSync('notes', 'INSERT', note.id, {
+    id: note.id, title: note.title, date: note.date, time: note.time,
+    duration: note.duration, time_range: note.timeRange ?? null,
+    personal_notes: note.personalNotes || '',
+    transcript: JSON.stringify(note.transcript || []),
+    summary: note.summary ? JSON.stringify(note.summary) : null,
+    folder_id: note.folderId || null,
+    coaching_metrics: note.coachingMetrics ? JSON.stringify(note.coachingMetrics) : null,
+  })
 }
 
 export function updateNote(id: string, data: any): void {
@@ -82,15 +113,22 @@ export function updateNote(id: string, data: any): void {
   values.push(id)
 
   getDb().prepare(`UPDATE notes SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+
+  // Log sync with the full current row
+  const updated = getDb().prepare('SELECT * FROM notes WHERE id = ?').get(id) as any
+  if (updated) logSync('notes', 'UPDATE', id, updated)
 }
 
 export function deleteNote(id: string): void {
   getDb().prepare('DELETE FROM notes WHERE id = ?').run(id)
+  logSync('notes', 'DELETE', id, null)
 }
 
 export function updateNoteFolder(noteId: string, folderId: string | null): void {
   getDb().prepare("UPDATE notes SET folder_id = ?, updated_at = datetime('now') WHERE id = ?")
     .run(folderId, noteId)
+  const updated = getDb().prepare('SELECT * FROM notes WHERE id = ?').get(noteId) as any
+  if (updated) logSync('notes', 'UPDATE', noteId, updated)
 }
 
 // --- Folders CRUD ---
@@ -103,6 +141,9 @@ export function addFolder(folder: any): void {
   getDb().prepare(`
     INSERT INTO folders (id, name, color, icon) VALUES (?, ?, ?, ?)
   `).run(folder.id, folder.name, folder.color || '#8B7355', folder.icon || 'folder')
+  logSync('folders', 'INSERT', folder.id, {
+    id: folder.id, name: folder.name, color: folder.color || '#8B7355', icon: folder.icon || 'folder',
+  })
 }
 
 export function updateFolder(id: string, data: any): void {
@@ -117,11 +158,14 @@ export function updateFolder(id: string, data: any): void {
   values.push(id)
 
   getDb().prepare(`UPDATE folders SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  const updated = getDb().prepare('SELECT * FROM folders WHERE id = ?').get(id) as any
+  if (updated) logSync('folders', 'UPDATE', id, updated)
 }
 
 export function deleteFolder(id: string): void {
   getDb().prepare('UPDATE notes SET folder_id = NULL WHERE folder_id = ?').run(id)
   getDb().prepare('DELETE FROM folders WHERE id = ?').run(id)
+  logSync('folders', 'DELETE', id, null)
 }
 
 // --- Local calendar blocks (Syag-only, not synced to Google/Outlook) ---
@@ -183,6 +227,7 @@ export function setSetting(key: string, value: string): void {
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(key, value)
+  logSync('settings', 'UPDATE', key, { key, value })
 }
 
 export function getAllSettings(): Record<string, string> {

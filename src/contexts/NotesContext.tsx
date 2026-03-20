@@ -68,6 +68,15 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Refresh notes when sync pushes data from another device
+  useEffect(() => {
+    if (!api?.sync) return;
+    const unsub = api.sync.onDataChanged(() => {
+      api.db.notes.getAll().then((dbNotes) => setNotes(dbNotes));
+    });
+    return unsub;
+  }, [api]);
+
   useEffect(() => {
     if (!api) saveNotesToLS(notes);
   }, [notes]);

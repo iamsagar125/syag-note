@@ -5,6 +5,7 @@ import { createMainWindow, getMainWindow } from './windows'
 import { setupTray } from './tray'
 import { registerIPCHandlers } from './ipc-handlers'
 import { initDatabase, getSetting } from './storage/database'
+import { startSync, stopSync } from './storage/icloud-sync'
 import { ensureModelsDir } from './models/manager'
 import { startMeetingDetection, stopMeetingDetection } from './meeting-detector'
 import { setupPowerMonitor } from './power-manager'
@@ -69,6 +70,11 @@ app.whenReady().then(async () => {
   registerIPCHandlers()
   loadOptionalProviders()
 
+  // Start iCloud sync if enabled
+  if (getSetting('icloud-sync-enabled') === 'true') {
+    startSync()
+  }
+
   // Start Agent API if enabled and token exists
   if (getSetting('api-enabled') === 'true' && getApiToken()) {
     startApiServer().catch(err => console.error('[api] Failed to start:', err))
@@ -113,6 +119,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  stopSync()
   stopMeetingDetection()
   destroyFloatingIndicator()
   stopApiServer().catch(() => {})

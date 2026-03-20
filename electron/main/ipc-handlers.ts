@@ -791,6 +791,30 @@ export function registerIPCHandlers(): void {
     if (win) win.show()
   })
 
+  // --- iCloud Sync ---
+  ipcMain.handle('sync:get-status', () => {
+    const { getSyncStatus } = require('./storage/icloud-sync')
+    return getSyncStatus()
+  })
+  ipcMain.handle('sync:is-icloud-available', () => {
+    const { isICloudAvailable } = require('./storage/icloud-sync')
+    return isICloudAvailable()
+  })
+  ipcMain.handle('sync:enable', async () => {
+    const { enableSync } = require('./storage/icloud-sync')
+    return enableSync()
+  })
+  ipcMain.handle('sync:disable', () => {
+    const { disableSync } = require('./storage/icloud-sync')
+    disableSync()
+    return true
+  })
+  ipcMain.handle('sync:force-sync', async () => {
+    const { forceSyncNow } = require('./storage/icloud-sync')
+    await forceSyncNow()
+    return true
+  })
+
   // --- App ---
   ipcMain.handle('app:get-version', () => app.getVersion())
   ipcMain.handle('app:apple-foundation-available', () => checkAppleFoundationAvailable())

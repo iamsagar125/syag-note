@@ -155,6 +155,8 @@ type ElectronAPI = {
   floating?: {
     updateMeeting: (state: { title: string; startTime: number; isRecording: boolean } | null) => void
     focusMain: () => void
+    /** Hide the overlay until the user focuses Syag again or meeting state updates. */
+    userDismiss?: () => void
     onState: (callback: (state: { title: string; startTime: number; isRecording: boolean } | null) => void) => () => void
   }
   trayAgenda?: {
@@ -229,6 +231,22 @@ type ElectronAPI = {
       updateLabel: (id: string, label: string) => Promise<boolean>
     }
     extractEntities: (data: { noteId: string; summary: any; transcript: any[]; model: string; calendarAttendees?: any[] }) => Promise<{ ok: boolean; peopleCount?: number; commitmentCount?: number; topicCount?: number; error?: string }>
+  }
+  sync?: {
+    getStatus: () => Promise<{
+      enabled: boolean
+      icloudAvailable: boolean
+      lastSyncAt: string | null
+      deviceCount: number
+      pendingChanges: number
+      state: 'synced' | 'syncing' | 'offline' | 'error' | 'disabled'
+      error?: string
+    }>
+    isICloudAvailable: () => Promise<boolean>
+    enable: () => Promise<{ ok: boolean; error?: string }>
+    disable: () => Promise<boolean>
+    forceSync: () => Promise<boolean>
+    onDataChanged: (callback: (data: { count: number }) => void) => () => void
   }
   agentApi?: {
     enable: () => Promise<boolean>

@@ -4,6 +4,27 @@ All notable changes to Syag are documented here. **Keep this file updated with e
 
 ---
 
+## [1.8.0] — 2026-03-20
+
+### Added
+- **iCloud Drive sync:** Opt-in sync via iCloud Drive (Settings > Sync). Local-first architecture with JSONL change logs — SQLite never touches iCloud directly, avoiding WAL corruption. Syncs notes, folders, people, commitments, topics, and UI preferences across all your Macs.
+- **Sync status indicator:** Cloud icon in the sidebar header shows real-time sync state (synced, syncing, offline, error). Hidden when sync is disabled.
+- **Sync settings UI:** New "Sync" section in Settings with enable/disable toggle, device count, last sync time, and force-sync button.
+- **Auto-backup on sync toggle:** 3 rolling backups created automatically before enabling or disabling sync.
+- **Device bootstrapping:** New devices joining an existing sync automatically restore from the latest snapshot and replay pending changes.
+- **Dismissable floating indicator:** External recording overlay can now be dismissed; reappears on next meeting or when main window is refocused.
+- **Shared meeting indicator pill:** Extracted `MeetingIndicatorPill` component shared between in-app and floating indicator views.
+- **Preferences event bus:** `preferences-events.ts` dispatches changes so components react instantly when settings toggle (e.g., recording indicator on/off).
+
+### Changed
+- **Sync resource optimization:** Watcher reads JSONL from byte cursor (not full file), caches device file list, and skips reads when file size is unchanged. Logger buffers writes (2s flush interval). Replayer batches seenIds persistence and caches schema version. UI status polling reduced from 30s to 5-min heartbeat. Manifest cached in memory with 60s TTL. Together these cut idle I/O by ~75%.
+- **Recording indicator respects settings:** Floating overlay and in-app pill now check the "Live recording indicator" preference before showing, and update immediately when toggled.
+- **LiveMeetingIndicator simplified:** Refactored to use shared `MeetingIndicatorPill`, reducing duplication.
+- **FloatingIndicator streamlined:** Uses shared pill component and formats; code reduced ~40%.
+
+### Fixed
+- **Sync change logging:** All data stores (notes, folders, people, commitments, topics, note_people, note_topics, settings) now emit sync change records on every mutation.
+
 ## [1.7.0]
 
 - **Fix false "You were mentioned" alerts:** Mention detection now only triggers on speech from others (system audio), not your own mic. Fuzzy Levenshtein matching removed — only exact name matches trigger alerts.

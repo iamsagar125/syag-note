@@ -129,6 +129,21 @@ const MIGRATIONS: { version: number; up: string[] }[] = [
       `CREATE INDEX IF NOT EXISTS idx_local_blocks_start ON local_calendar_blocks(start_iso)`,
     ]
   },
+  {
+    version: 7,
+    up: [
+      `ALTER TABLE notes ADD COLUMN sync_device_origin TEXT`,
+      `ALTER TABLE notes ADD COLUMN sync_change_id TEXT`,
+      `ALTER TABLE folders ADD COLUMN sync_device_origin TEXT`,
+      `ALTER TABLE folders ADD COLUMN sync_change_id TEXT`,
+      `ALTER TABLE people ADD COLUMN sync_device_origin TEXT`,
+      `ALTER TABLE people ADD COLUMN sync_change_id TEXT`,
+      `ALTER TABLE commitments ADD COLUMN sync_device_origin TEXT`,
+      `ALTER TABLE commitments ADD COLUMN sync_change_id TEXT`,
+      `ALTER TABLE topics ADD COLUMN sync_device_origin TEXT`,
+      `ALTER TABLE topics ADD COLUMN sync_change_id TEXT`,
+    ]
+  },
 ]
 
 export function runMigrations(db: Database.Database): void {

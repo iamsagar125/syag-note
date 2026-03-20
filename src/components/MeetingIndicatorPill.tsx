@@ -1,0 +1,144 @@
+import { X } from "lucide-react";
+import type { CSSProperties } from "react";
+
+/** Shared time format for in-app and external floating meeting indicators. */
+export function formatMeetingIndicatorTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+const pillStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "8px 14px",
+  borderRadius: 24,
+  background: "rgba(30, 28, 25, 0.92)",
+  backdropFilter: "blur(12px)",
+  WebkitBackdropFilter: "blur(12px)",
+  color: "#fff",
+  cursor: "pointer",
+  fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif",
+  fontSize: 12,
+  fontWeight: 500,
+  userSelect: "none",
+  overflow: "hidden",
+  minWidth: 200,
+  maxWidth: 280,
+  boxShadow: "0 4px 24px rgba(0,0,0,0.25)",
+};
+
+export type MeetingIndicatorPillProps = {
+  title: string;
+  isRecording: boolean;
+  elapsedSeconds: number;
+  onPillClick: () => void;
+  /** If set, shows the same dismiss control as the in-app indicator. */
+  onDismiss?: () => void;
+  /** Merged onto the pill root (e.g. `WebkitAppRegion: "no-drag"` in the floating window). */
+  pillStyleExtra?: CSSProperties;
+};
+
+/**
+ * Canonical meeting status pill — used by LiveMeetingIndicator (main window) and FloatingIndicator (overlay window).
+ */
+export function MeetingIndicatorPill({
+  title,
+  isRecording,
+  elapsedSeconds,
+  onPillClick,
+  onDismiss,
+  pillStyleExtra,
+}: MeetingIndicatorPillProps) {
+  const elapsed = formatMeetingIndicatorTime(elapsedSeconds);
+  const displayTitle = title || "Recording";
+
+  return (
+    <>
+      <div
+        onClick={onPillClick}
+        style={{ ...pillStyle, ...pillStyleExtra }}
+      >
+        {isRecording ? (
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "#ef4444",
+              flexShrink: 0,
+              animation: "meeting-indicator-pulse 1.5s ease-in-out infinite",
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "#f59e0b",
+              flexShrink: 0,
+            }}
+          />
+        )}
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={displayTitle}
+        >
+          {displayTitle}
+        </span>
+        <span
+          style={{
+            fontVariantNumeric: "tabular-nums",
+            opacity: 0.8,
+            flexShrink: 0,
+          }}
+        >
+          {elapsed}
+        </span>
+        {onDismiss ? (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onDismiss();
+            }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 20,
+              height: 20,
+              borderRadius: "50%",
+              cursor: "pointer",
+              flexShrink: 0,
+              opacity: 0.5,
+              transition: "opacity 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = "1";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.opacity = "0.5";
+            }}
+            title="Dismiss"
+          >
+            <X style={{ width: 12, height: 12 }} />
+          </span>
+        ) : null}
+      </div>
+      <style>{`
+        @keyframes meeting-indicator-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+      `}</style>
+    </>
+  );
+}

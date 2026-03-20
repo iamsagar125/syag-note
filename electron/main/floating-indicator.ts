@@ -11,13 +11,15 @@ import { getMainWindow } from './windows'
 let floatingWin: BrowserWindow | null = null
 let meetingState: { title: string; startTime: number; isRecording: boolean } | null = null
 let mainWindowVisible = true
+/** User closed the overlay; hide until main is focused again or meeting state updates. */
+let userDismissedOverlay = false
 
 function createFloatingWindow(): BrowserWindow {
   const { width: screenW } = screen.getPrimaryDisplay().workAreaSize
 
   const win = new BrowserWindow({
     width: 280,
-    height: 48,
+    height: 52,
     x: Math.round(screenW / 2 - 140),
     y: 8,
     frame: false,
@@ -59,7 +61,7 @@ function sendState(): void {
 }
 
 function shouldShow(): boolean {
-  return !mainWindowVisible && meetingState != null
+  return !mainWindowVisible && meetingState != null && !userDismissedOverlay
 }
 
 function syncVisibility(): void {
@@ -87,6 +89,9 @@ export function setupFloatingIndicator(mainWin: BrowserWindow): void {
   const updateMainVisible = () => {
     const wasVisible = mainWindowVisible
     mainWindowVisible = mainWin.isVisible() && mainWin.isFocused() && !mainWin.isMinimized()
+    if (mainWindowVisible) {
+      userDismissedOverlay = false
+    }
     if (wasVisible !== mainWindowVisible) syncVisibility()
   }
 
@@ -99,8 +104,18 @@ export function setupFloatingIndicator(mainWin: BrowserWindow): void {
 
   ipcMain.on('floating:update-meeting', (_e, state: typeof meetingState) => {
     meetingState = state
+    if (state != null) {
+      userDismissedOverlay = false
+    }
     syncVisibility()
     sendState()
+  })
+
+  ipcMain.on('floating:user-dismiss', () => {
+    userDismissedOverlay = true
+    if (floatingWin && !floatingWin.isDestroyed() && floatingWin.isVisible()) {
+      floatingWin.hide()
+    }
   })
 
   ipcMain.on('floating:focus-main', () => {

@@ -20,6 +20,7 @@ import {
 import { ICSDialog, type CalendarProviderId } from "@/components/ICSDialog";
 import { isElectron, getElectronAPI } from "@/lib/electron-api";
 import { ACCOUNT_LS_KEY } from "@/lib/account-context";
+import { dispatchPreferencesUpdated } from "@/lib/preferences-events";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { JiraConnectDialog, type JiraConfig } from "@/components/JiraConnectDialog";
 import { SlackConnectDialog, type SlackConfig } from "@/components/SlackConnectDialog";
@@ -43,6 +44,7 @@ const sections = [
   { icon: Bell, label: "Notifications", id: "notifications" },
   { icon: Globe, label: "Integrations", id: "integrations" },
   { icon: BookOpen, label: "Knowledge Base", id: "knowledge-base" },
+  { icon: Cloud, label: "Sync", id: "sync" },
   { icon: Terminal, label: "Agent API", id: "agent-api" },
   { icon: Info, label: "About", id: "about" },
 ];
@@ -121,6 +123,171 @@ function SectionHeader({ title, description }: { title: string; description?: st
 }
 
 // ─── Knowledge Base Section ──────────────────────────────────────────────
+
+function SyncSection({ api }: { api: ReturnType<typeof getElectronAPI> }) {
+  const [status, setStatus] = useState<{
+    enabled: boolean;
+    icloudAvailable: boolean;
+    lastSyncAt: string | null;
+    deviceCount: number;
+    pendingChanges: number;
+    state: "synced" | "syncing" | "offline" | "error" | "disabled";
+    error?: string;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const refreshStatus = async () => {
+    if (!api?.sync) return;
+    const s = await api.sync.getStatus();
+    setStatus(s);
+  };
+
+  useEffect(() => {
+    refreshStatus();
+    const interval = setInterval(refreshStatus, 30_000);
+    return () => clearInterval(interval);
+  }, [api]);
+
+  const handleToggle = async () => {
+    if (!api?.sync || !status) return;
+    setLoading(true);
+    try {
+      if (status.enabled) {
+        if (!confirm("Disable iCloud sync? Your notes will remain on this Mac. Data already in iCloud stays there for other devices.")) {
+          setLoading(false);
+          return;
+        }
+        await api.sync.disable();
+        toast.success("iCloud sync disabled");
+      } else {
+        const available = await api.sync.isICloudAvailable();
+        if (!available) {
+          toast.error("iCloud Drive is not available. Sign in to iCloud in System Settings.");
+          setLoading(false);
+          return;
+        }
+        if (!confirm("Enable iCloud sync? This will sync your notes database to iCloud Drive. Notes on other Macs signed into the same Apple ID will sync automatically.")) {
+          setLoading(false);
+          return;
+        }
+        const result = await api.sync.enable();
+        if (!result.ok) {
+          toast.error(result.error ?? "Failed to enable sync");
+          setLoading(false);
+          return;
+        }
+        toast.success("iCloud sync enabled");
+      }
+      await refreshStatus();
+    } catch {
+      toast.error("Failed to toggle sync");
+    }
+    setLoading(false);
+  };
+
+  const handleForceSync = async () => {
+    if (!api?.sync) return;
+    setLoading(true);
+    try {
+      await api.sync.forceSync();
+      await refreshStatus();
+      toast.success("Sync completed");
+    } catch {
+      toast.error("Sync failed");
+    }
+    setLoading(false);
+  };
+
+  const stateLabel = status?.state === "synced"
+    ? "Up to date"
+    : status?.state === "syncing"
+    ? "Syncing..."
+    : status?.state === "offline"
+    ? "Offline"
+    : status?.state === "error"
+    ? `Error: ${status.error ?? "unknown"}`
+    : "Disabled";
+
+  const stateColor = status?.state === "synced"
+    ? "text-emerald-600 dark:text-emerald-400"
+    : status?.state === "syncing"
+    ? "text-amber-600 dark:text-amber-400"
+    : status?.state === "error"
+    ? "text-red-600 dark:text-red-400"
+    : "text-muted-foreground";
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-base font-semibold text-foreground mb-1">iCloud Sync</h2>
+        <p className="text-xs text-muted-foreground">
+          Sync your notes across all your Macs via iCloud Drive. Your data stays private — synced through your personal iCloud account.
+        </p>
+      </div>
+
+      {/* Enable toggle */}
+      <div className="flex items-center justify-between rounded-lg border border-border bg-card p-4">
+        <div>
+          <p className="text-sm font-medium text-foreground">Enable iCloud Sync</p>
+          <p className={cn("text-xs mt-0.5", stateColor)}>
+            {stateLabel}
+          </p>
+        </div>
+        <button
+          onClick={handleToggle}
+          disabled={loading}
+          className={cn(
+            "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
+            status?.enabled ? "bg-accent" : "bg-muted-foreground/30"
+          )}
+        >
+          <span
+            className={cn(
+              "inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform",
+              status?.enabled ? "translate-x-[18px]" : "translate-x-[3px]"
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Status details (only when enabled) */}
+      {status?.enabled && (
+        <>
+          <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Devices synced</span>
+              <span className="text-xs font-mono text-foreground">{status.deviceCount}</span>
+            </div>
+            {status.lastSyncAt && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Last synced</span>
+                <span className="text-xs font-mono text-foreground">
+                  {new Date(status.lastSyncAt).toLocaleString()}
+                </span>
+              </div>
+            )}
+            {status.pendingChanges > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Pending changes</span>
+                <span className="text-xs font-mono text-foreground">{status.pendingChanges}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Force sync button */}
+          <button
+            onClick={handleForceSync}
+            disabled={loading}
+            className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-sm text-foreground hover:bg-muted/50 transition-colors"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+            Sync now
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
 
 function AgentApiSection({ api }: { api: ReturnType<typeof getElectronAPI> }) {
   const [enabled, setEnabled] = useState(false);
@@ -1136,6 +1303,9 @@ export default function SettingsPage() {
       if (key === "launchOnStartup" && api) {
         api.app.setLoginItem(value as boolean).catch(console.error);
       }
+      if (key === "showRecordingIndicator") {
+        dispatchPreferencesUpdated();
+      }
       return next;
     });
   };
@@ -1285,7 +1455,7 @@ export default function SettingsPage() {
                 <div className="space-y-5">
                   <SectionHeader title="Preferences" description="Customize how Syag behaves and appears" />
                   <div className="space-y-2">
-                    <SettingRow label="Live recording indicator" description="The floating indicator sits on the right of your screen and shows when you're transcribing">
+                    <SettingRow label="Live recording indicator" description="Shows a compact pill while transcribing: top-right in the app when Syag is visible and focused, and a small always-on-top pill when the window is minimized, hidden, or in the background. Turn off to hide both. You can still open Syag from the Dock or the menu bar icon.">
                       <Toggle enabled={prefs.showRecordingIndicator} onToggle={() => updatePref("showRecordingIndicator", !prefs.showRecordingIndicator)} />
                     </SettingRow>
                     <SettingRow label="Launch Syag on startup" description="Syag will open automatically when you log in">
@@ -1900,6 +2070,10 @@ export default function SettingsPage() {
 
               {active === "knowledge-base" && (
                 <KnowledgeBaseSection api={api} />
+              )}
+
+              {active === "sync" && (
+                <SyncSection api={api} />
               )}
 
               {active === "agent-api" && (

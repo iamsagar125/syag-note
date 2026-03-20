@@ -234,6 +234,7 @@ const electronAPI = {
     updateMeeting: (state: { title: string; startTime: number; isRecording: boolean } | null) =>
       ipcRenderer.send('floating:update-meeting', state),
     focusMain: () => ipcRenderer.send('floating:focus-main'),
+    userDismiss: () => ipcRenderer.send('floating:user-dismiss'),
     onState: (callback: (state: { title: string; startTime: number; isRecording: boolean } | null) => void) => {
       const handler = (_event: any, s: any) => callback(s)
       ipcRenderer.on('floating:state', handler)
@@ -310,6 +311,27 @@ const electronAPI = {
     },
     extractEntities: (data: { noteId: string; summary: any; transcript: any[]; model: string; calendarAttendees?: any[] }) =>
       ipcRenderer.invoke('memory:extract-entities', data) as Promise<{ ok: boolean; peopleCount?: number; commitmentCount?: number; topicCount?: number; error?: string }>,
+  },
+
+  sync: {
+    getStatus: () => ipcRenderer.invoke('sync:get-status') as Promise<{
+      enabled: boolean
+      icloudAvailable: boolean
+      lastSyncAt: string | null
+      deviceCount: number
+      pendingChanges: number
+      state: 'synced' | 'syncing' | 'offline' | 'error' | 'disabled'
+      error?: string
+    }>,
+    isICloudAvailable: () => ipcRenderer.invoke('sync:is-icloud-available') as Promise<boolean>,
+    enable: () => ipcRenderer.invoke('sync:enable') as Promise<{ ok: boolean; error?: string }>,
+    disable: () => ipcRenderer.invoke('sync:disable') as Promise<boolean>,
+    forceSync: () => ipcRenderer.invoke('sync:force-sync') as Promise<boolean>,
+    onDataChanged: (callback: (data: { count: number }) => void) => {
+      const handler = (_event: any, data: { count: number }) => callback(data)
+      ipcRenderer.on('sync:data-changed', handler)
+      return () => ipcRenderer.removeListener('sync:data-changed', handler)
+    },
   },
 
   agentApi: {
